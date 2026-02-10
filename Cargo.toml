@@ -1,0 +1,27 @@
+[package]
+name = "skera"
+version = "0.1.0"
+description = "Subsetting a font file according to provided input."
+readme = "README.md"
+categories = ["text-processing"]
+
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.5.4", features = ["derive"] }
+fnv = "1.0.7"
+hashbrown = "0.15.1"
+regex = "1.10.4"
+skrifa = { workspace = true }
+thiserror = "1.0.58"
+write-fonts = { workspace = true, features = ["read"] }
+
+
+[dev-dependencies]
+diff = "0.1.13"
+tempdir = "0.3.7"
+font-test-data = { workspace = true }
