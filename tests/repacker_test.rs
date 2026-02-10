@@ -88,6 +88,7 @@ impl RepackerTestCase {
             &layout_features,
             &name_ids,
             &name_languages,
+            &None,
         );
 
         subset_font(&font, &plan).unwrap();

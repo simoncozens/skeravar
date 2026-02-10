@@ -494,6 +494,7 @@ fn gen_subset_font_file(font_file: &str, subset: &str, profile: &str, output_fil
         &layout_features,
         &name_ids,
         &name_languages,
+        &None,
     );
 
     let subset_output = subset_font(&font, &plan).unwrap();
