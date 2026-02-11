@@ -39,11 +39,21 @@ mod variations;
 mod vmtx;
 mod vorg;
 mod vvar;
+
+use std::cell::RefCell;
+
 use crate::{
+    deltas::{
+        composite_glyph as composite_glyph_deltas, simple_glyph as simple_glyph_deltas,
+        SimpleGlyph as SimpleGlyphForDeltas,
+    },
+    glyf_loca::{ContourPoint, ContourPoints, PHANTOM_POINT_COUNT},
+    head::HeadMaxpInfo,
     parsing_util::InstancingSpec,
     repack::resolve_overflows,
     variations::solver::{Triple, TripleDistances},
 };
+use font_types::Point;
 use gdef::CollectUsedMarkSets;
 use inc_bimap::IncBiMap;
 use layout::{
@@ -59,7 +69,12 @@ use unicode_closure::unicode_closure;
 use fnv::FnvHashMap;
 use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::{
-    raw::{tables::fvar::Fvar, ReadError},
+    instance::LocationRef,
+    prelude::Size,
+    raw::{
+        tables::{avar::Avar, fvar::Fvar, glyf::PointFlags},
+        ReadError,
+    },
     MetadataProvider,
 };
 use thiserror::Error;
@@ -400,6 +415,11 @@ pub struct Plan {
     axes_location: FnvHashMap<Tag, Triple>,
     normalized_coords: Vec<F2Dot14>,
     normalized_coords_16_16: Vec<F2Dot14>,
+    //map: new_gid -> contour points vector
+    new_gid_contour_points_map: FnvHashMap<GlyphId, ContourPoints>,
+    // new gids set for composite glyphs
+    composite_new_gids: IntSet<GlyphId>,
+    new_gid_instance_deltas_map: FnvHashMap<GlyphId, Vec<Point<f32>>>,
 
     // user specified axes range map
     user_axes_location: FnvHashMap<Tag, Triple>,
@@ -411,6 +431,8 @@ pub struct Plan {
     axes_index_map: FnvHashMap<usize, usize>,
     axis_tags: Vec<Tag>,
     axes_old_index_tag_map: FnvHashMap<usize, Tag>,
+
+    head_maxp_info: RefCell<HeadMaxpInfo>,
 }
 
 #[derive(Default)]
@@ -469,6 +491,8 @@ impl Plan {
             this.unicode_to_new_gid_list[i].1 = *new_gid;
         }
         this.collect_base_var_indices(font);
+        this.get_instance_glyphs_contour_points(font);
+        this.get_instance_deltas(font);
         this
     }
 
@@ -1025,6 +1049,49 @@ impl Plan {
         );
     }
 
+    fn get_instance_glyphs_contour_points(&mut self, font: &FontRef) -> Result<(), SubsetError> {
+        if self.normalized_coords.is_empty() || self.all_axes_pinned {
+            // Per harfbuzz:
+            // contour_points vector only needed for updating gvar table (infer delta and
+            // iup delta optimization) during partial instancing
+            return Ok(());
+        }
+        let Ok(loca) = font.loca(None) else {
+            return Ok(());
+        }; // Could be CFF
+        let Ok(glyf) = font.glyf() else {
+            return Ok(());
+        }; // loca but no glyf? No outlines for you.
+        for (new_gid, old_gid) in self.new_to_old_gid_list.iter() {
+            let glyph_result = loca.get_glyf(*old_gid, &glyf);
+
+            let glyph = match glyph_result {
+                Ok(glyph) => {
+                    self.new_gid_contour_points_map.insert(
+                        *new_gid,
+                        ContourPoints::from_glyph_no_var(&glyph, font, *old_gid)
+                            .map_err(SubsetError::ReadError)?,
+                    );
+                    glyph
+                }
+                Err(_) => {
+                    // Error reading glyph - insert empty for safety
+                    self.new_gid_contour_points_map
+                        .insert(*new_gid, ContourPoints(Vec::new()));
+                    None
+                }
+            };
+            if self
+                .subset_flags
+                .contains(SubsetFlags::SUBSET_FLAGS_OPTIMIZE_IUP_DELTAS)
+                && matches!(glyph, Some(Glyph::Composite(..)))
+            {
+                self.composite_new_gids.insert(*new_gid);
+            }
+        }
+        Ok(())
+    }
+
     fn apply_instancing_spec(
         &mut self,
         spec: &InstancingSpec,
@@ -1083,6 +1150,160 @@ impl Plan {
             }
         }
         Ok(())
+    }
+
+    fn get_instance_deltas(&mut self, font: &FontRef) -> Result<(), SubsetError> {
+        if self.user_axes_location.is_empty() {
+            return Ok(());
+        }
+        let Ok(gvar) = font.gvar() else { return Ok(()) };
+
+        let Ok(loca) = font.loca(None) else {
+            return Ok(());
+        }; // Could be CFF
+        let Ok(glyf) = font.glyf() else { return Ok(()) };
+        for (new_gid, old_gid) in self.new_to_old_gid_list.iter() {
+            let glyph = loca.get_glyf(*old_gid, &glyf).unwrap();
+
+            let coords = &self.normalized_coords;
+            match glyph {
+                Some(Glyph::Simple(simple_glyph)) => {
+                    if simple_glyph.num_points() == 0 {
+                        let mut deltas_buffer =
+                            vec![font_types::Point { x: 0.0, y: 0.0 }; PHANTOM_POINT_COUNT];
+                        composite_glyph_deltas(&gvar, *old_gid, coords, &mut deltas_buffer)
+                            .map_err(SubsetError::ReadError)?;
+                        self.new_gid_instance_deltas_map
+                            .insert(*new_gid, deltas_buffer);
+                        continue;
+                    }
+
+                    let mut points: Vec<Point<f32>> =
+                        vec![Point { x: 0.0, y: 0.0 }; simple_glyph.num_points()];
+                    let mut flags: Vec<PointFlags> =
+                        vec![PointFlags::default(); simple_glyph.num_points()];
+                    simple_glyph
+                        .read_points_fast(&mut points, &mut flags)
+                        .map_err(SubsetError::ReadError)?;
+                    let end_pts: Vec<u16> = simple_glyph
+                        .end_pts_of_contours()
+                        .iter()
+                        .map(|&i| i.get())
+                        .collect();
+                    // Add the four phantom points, steal from end of new_gid_contour_points_map
+                    let Some(contour_points) = self.new_gid_contour_points_map.get(new_gid) else {
+                        log::warn!("Contour points not found for glyph id {:?}, skipping gvar delta calculation for this glyph", new_gid);
+                        continue;
+                    };
+                    let phantoms = contour_points
+                        .0
+                        .iter()
+                        .skip(contour_points.0.len() - PHANTOM_POINT_COUNT);
+                    for phantom in phantoms {
+                        points.push(Point {
+                            x: phantom.x,
+                            y: phantom.y,
+                        });
+                        flags.push(PointFlags::default());
+                    }
+                    let skrifa_simple_glyph = SimpleGlyphForDeltas {
+                        points: &points,
+                        flags: &mut flags,
+                        contours: &end_pts,
+                    };
+                    let mut deltas_buffer =
+                        vec![font_types::Point { x: 0.0, y: 0.0 }; points.len()];
+                    let mut iup_buffer = vec![font_types::Point { x: 0.0, y: 0.0 }; points.len()];
+                    simple_glyph_deltas(
+                        &gvar,
+                        *old_gid,
+                        coords,
+                        skrifa_simple_glyph,
+                        &mut iup_buffer,
+                        &mut deltas_buffer,
+                    )
+                    .map_err(SubsetError::ReadError)?;
+                    self.new_gid_instance_deltas_map
+                        .insert(*new_gid, deltas_buffer);
+                }
+                Some(Glyph::Composite(composite_glyph)) => {
+                    let delta_count =
+                        composite_glyph.components().count() + glyf_loca::PHANTOM_POINT_COUNT;
+                    let mut deltas_buffer = vec![font_types::Point { x: 0.0, y: 0.0 }; delta_count];
+                    composite_glyph_deltas(&gvar, *old_gid, coords, &mut deltas_buffer)
+                        .map_err(SubsetError::ReadError)?;
+
+                    self.new_gid_instance_deltas_map
+                        .insert(*new_gid, deltas_buffer);
+                }
+                None => {
+                    // Empty glyph, still needs deltas for phantom points if it's not .notdef with no outline, otherwise it can be safely skipped
+                    let Some(contour_points) = self.new_gid_contour_points_map.get(new_gid) else {
+                        log::warn!("Contour points not found for glyph id {:?}, skipping gvar delta calculation for this glyph", new_gid);
+                        continue;
+                    };
+                    let mut points: Vec<Point<f32>> = Vec::new();
+                    let mut flags: Vec<PointFlags> = Vec::new();
+                    // Add the four phantom points, steal from end of new_gid_contour_points_map
+                    for phantom in contour_points.0.iter() {
+                        points.push(Point {
+                            x: phantom.x,
+                            y: phantom.y,
+                        });
+                        flags.push(PointFlags::default());
+                    }
+                    let mut deltas_buffer =
+                        vec![font_types::Point { x: 0.0, y: 0.0 }; PHANTOM_POINT_COUNT];
+                    composite_glyph_deltas(&gvar, *old_gid, coords, &mut deltas_buffer)
+                        .map_err(SubsetError::ReadError)?;
+                    // log::debug!("Deltas for glyph id {:?}: {:?}", new_gid, deltas_buffer);
+                    self.new_gid_instance_deltas_map
+                        .insert(*new_gid, deltas_buffer);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_new_metrics(&mut self, font: &FontRef) {
+        // Skrifa doesn't apply deltas to LSB, so we'll take the original LSB and add our own
+        // deltas from the phantom points.
+        let location: LocationRef = LocationRef::default();
+        let glyph_metrics = font.glyph_metrics(Size::unscaled(), location);
+        for (new_gid, old_gid) in self.new_to_old_gid_list.iter() {
+            let instance_deltas = self.new_gid_instance_deltas_map.get(new_gid);
+            log::trace!(
+                "Phantom points: {:?}",
+                instance_deltas.map(|deltas| deltas
+                    .iter()
+                    .skip(deltas.len() - PHANTOM_POINT_COUNT)
+                    .collect::<Vec<_>>())
+            );
+            let lsb_delta = instance_deltas
+                .and_then(|deltas| {
+                    if deltas.len() > 4 {
+                        deltas.get(deltas.len() - 4)
+                    } else {
+                        None
+                    }
+                })
+                .map(|delta| delta.x)
+                .unwrap_or(0.0);
+            let aw_delta = instance_deltas
+                .and_then(|deltas| {
+                    if deltas.len() > 4 {
+                        deltas.get(deltas.len() - 3)
+                    } else {
+                        None
+                    }
+                })
+                .map(|delta| delta.x)
+                .unwrap_or(0.0);
+            let aw = glyph_metrics.advance_width(*old_gid).unwrap_or(0.0) + aw_delta;
+            let ls = glyph_metrics.left_side_bearing(*old_gid).unwrap_or(0.0) + lsb_delta;
+            self.hmtx_map.insert(*new_gid, (aw as u16, ls as i16));
+            // No vertical stuff in skrifa yet
+        }
     }
 }
 
@@ -1290,6 +1511,12 @@ pub enum SubsetError {
 
     #[error("Invalid input to --variations: {0}")]
     InvalidInstancingSpec(String),
+
+    #[error("Invalid contour data in glyf table")]
+    InvalidContourData,
+
+    #[error("Error reading font data: {0}")]
+    ReadError(ReadError),
 }
 
 pub trait NameIdClosure {
@@ -1504,6 +1731,7 @@ fn subset_table<'a>(
     if plan.no_subset_tables.contains(tag) {
         return passthrough_table(tag, font, s);
     }
+    // log::debug!("Subsetting table {:?} with dependencies", tag);
 
     match tag {
         Avar::TAG => {
@@ -1586,12 +1814,8 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Hdmx::TAG))?
             .subset(plan, font, s, builder),
 
-        //handled by glyf table if exists
-        Head::TAG => font.glyf().map(|_| ()).or_else(|_| {
-            font.head()
-                .map_err(|_| SubsetError::SubsetTableError(Head::TAG))?
-                .subset(plan, font, s, builder)
-        }),
+        //Skip, handled by glyf
+        Head::TAG => Ok(()),
 
         //Skip, handled by Hmtx
         Hhea::TAG => Ok(()),
