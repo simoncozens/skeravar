@@ -64,6 +64,7 @@ pub use parsing_util::{
     parse_instancing_spec, parse_name_ids, parse_name_languages, parse_tag_list, parse_unicodes,
     populate_gids,
 };
+use std::cell::RefCell;
 use unicode_closure::unicode_closure;
 
 use fnv::FnvHashMap;
@@ -72,7 +73,12 @@ use skrifa::{
     instance::LocationRef,
     prelude::Size,
     raw::{
-        tables::{avar::Avar, fvar::Fvar, glyf::PointFlags},
+        tables::{
+            avar::Avar,
+            fvar::Fvar,
+            glyf::PointFlags,
+            variations::{DeltaSetIndex, ItemVariationStore, NO_VARIATION_INDEX},
+        },
         ReadError,
     },
     MetadataProvider,
@@ -109,7 +115,6 @@ use write_fonts::{
             post::Post,
             sbix::Sbix,
             stat::Stat,
-            variations::NO_VARIATION_INDEX,
             vhea::Vhea,
             vmtx::Vmtx,
             vorg::Vorg,
@@ -923,8 +928,11 @@ impl Plan {
                     }
                 }
                 remap_variation_indices(
-                    vardata_count,
+                    &var_store,
                     &variation_indices,
+                    &self.normalized_coords,
+                    !self.pinned_at_default,
+                    self.all_axes_pinned,
                     &mut self.colr_varidx_delta_map,
                 );
                 generate_varstore_inner_maps(
@@ -1005,15 +1013,20 @@ impl Plan {
         let mut varidx_set = IntSet::empty();
         gdef.collect_variation_indices(self, &mut varidx_set);
 
-        if let Ok(gpos) = font.gpos() {
-            gpos.collect_variation_indices(self, &mut varidx_set);
+        if !self.drop_tables.contains(Tag::new(b"GPOS")) {
+            if let Ok(gpos) = font.gpos() {
+                gpos.collect_variation_indices(self, &mut varidx_set);
+            }
         }
 
         let vardata_count = var_store.item_variation_data_count() as u32;
         remap_variation_indices(
-            vardata_count,
+            &var_store,
             &varidx_set,
-            &mut self.layout_varidx_delta_map,
+            &self.normalized_coords,
+            !self.pinned_at_default,
+            self.all_axes_pinned,
+            &mut self.layout_varidx_delta_map.borrow_mut(),
         );
 
         generate_varstore_inner_maps(
@@ -1045,7 +1058,14 @@ impl Plan {
         }
 
         let vardata_count = var_store.item_variation_data_count() as u32;
-        remap_variation_indices(vardata_count, &varidx_set, &mut self.base_varidx_delta_map);
+        remap_variation_indices(
+            &var_store,
+            &varidx_set,
+            &self.normalized_coords,
+            !self.pinned_at_default,
+            self.all_axes_pinned,
+            &mut self.base_varidx_delta_map,
+        );
         generate_varstore_inner_maps(
             &varidx_set,
             vardata_count,
@@ -1287,10 +1307,14 @@ fn normalize_axis_value(axis: &skrifa::Axis, v: f32) -> f32 {
     }
 }
 fn remap_variation_indices(
-    vardata_count: u32,
+    var_store: &ItemVariationStore,
     varidx_set: &IntSet<u32>,
+    normalized_coords: &[F2Dot14],
+    calculate_delta: bool,
+    no_variations: bool,
     varidx_delta_map: &mut FnvHashMap<u32, (u32, i32)>,
 ) {
+    let vardata_count = var_store.item_variation_data_count() as u32;
     if vardata_count == 0 || varidx_set.is_empty() {
         return;
     }
@@ -1309,10 +1333,27 @@ fn remap_variation_indices(
             new_major += 1;
         }
 
-        let new_idx = (new_major << 16) + new_minor;
-        varidx_delta_map.insert(var_idx, (new_idx, 0));
+        let mut delta = 0;
+        if calculate_delta {
+            let index = DeltaSetIndex {
+                outer: major as u16,
+                inner: (var_idx & 0xFFFF) as u16,
+            };
+            if let Ok(value) = var_store.compute_delta(index, normalized_coords) {
+                delta = value;
+            }
+        }
 
-        new_minor += 1;
+        let new_idx = if no_variations {
+            NO_VARIATION_INDEX
+        } else {
+            (new_major << 16) + new_minor
+        };
+        varidx_delta_map.insert(var_idx, (new_idx, delta));
+
+        if !no_variations {
+            new_minor += 1;
+        }
         last_major = major;
     }
 }

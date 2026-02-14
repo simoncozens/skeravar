@@ -64,7 +64,17 @@ impl<'a> SubsetTable<'a> for SinglePosFormat1<'_> {
         }
 
         let value_record = self.value_record();
-        let new_format = if plan
+        let new_format = if !plan.normalized_coords.is_empty() {
+            // Instancing case: compute effective formats to filter out device flags
+            // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
+            compute_effective_format(
+                &value_record,
+                false, // strip_hints=false for instancing
+                false, // strip_empty=false
+                self.offset_data(),
+                Some(plan),
+            )
+        } else if plan
             .subset_flags
             .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
         {
@@ -75,7 +85,13 @@ impl<'a> SubsetTable<'a> for SinglePosFormat1<'_> {
             } else {
                 true
             };
-            compute_effective_format(&value_record, strip_hints, true)
+            compute_effective_format(
+                &value_record,
+                strip_hints,
+                true,
+                self.offset_data(),
+                Some(plan),
+            )
         } else {
             self.value_format()
         };
@@ -123,10 +139,15 @@ fn compute_new_value_format(
     has_gdef_varstore: bool,
     font: &FontRef,
     value_records: impl IntoIterator<Item = ValueRecord>,
+    font_data: FontData,
 ) -> ValueFormat {
-    // TODO: support instancing
     let mut new_format = ValueFormat::empty();
-    if plan
+    if !plan.normalized_coords.is_empty() {
+        // Instancing case: compute effective formats to filter out device flags
+        for record in value_records {
+            new_format |= compute_effective_format(&record, false, false, font_data, Some(plan));
+        }
+    } else if plan
         .subset_flags
         .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
     {
@@ -138,7 +159,8 @@ fn compute_new_value_format(
         };
 
         for record in value_records {
-            new_format |= compute_effective_format(&record, strip_hints, true);
+            new_format |=
+                compute_effective_format(&record, strip_hints, true, font_data, Some(plan));
         }
     } else if let Some(rec) = value_records.into_iter().next() {
         new_format = rec.format;
@@ -177,7 +199,8 @@ impl<'a> SubsetTable<'a> for SinglePosFormat2<'_> {
             .enumerate()
             .filter(|&(i, ref _rec)| retained_rec_idxes.contains(i as u16))
             .filter_map(|(_i, rec)| rec.ok());
-        let new_format = compute_new_value_format(plan, state.has_gdef_varstore, font, it);
+        let new_format =
+            compute_new_value_format(plan, state.has_gdef_varstore, font, it, self.offset_data());
 
         let Ok(first_retained_rec) =
             value_records.get(retained_rec_idxes.first().unwrap() as usize)
