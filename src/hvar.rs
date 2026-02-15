@@ -1,7 +1,5 @@
 //! impl subset() for HVAR
 
-use crate::fnv::FnvHashMap;
-use crate::offset::SerializeSerialize;
 use crate::{
     offset::SerializeSubset,
     serialize::{SerializeErrorFlags, Serializer},
@@ -31,6 +29,9 @@ impl Subset for Hvar<'_> {
         s: &mut Serializer,
         _builder: &mut FontBuilder,
     ) -> Result<(), SubsetError> {
+        if plan.all_axes_pinned {
+            return Ok(());
+        }
         Self::serialize(s, (self, plan)).map_err(|_| SubsetError::SubsetTableError(Hvar::TAG))
     }
 }
