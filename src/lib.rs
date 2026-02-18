@@ -1885,12 +1885,14 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Sbix::TAG))?
             .subset(plan, font, s, builder),
 
+        Stat::TAG => font
+            .stat()
+            .map_err(|_| SubsetError::SubsetTableError(Stat::TAG))?
+            .subset(plan, font, s, builder),
         Vorg::TAG => font
             .vorg()
             .map_err(|_| SubsetError::SubsetTableError(Vorg::TAG))?
             .subset(plan, font, s, builder),
-
-        Stat::TAG => passthrough_table(tag, font, s),
 
         _ if plan
             .subset_flags
