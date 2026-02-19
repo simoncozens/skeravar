@@ -23,6 +23,7 @@ mod hvar;
 mod inc_bimap;
 mod layout;
 mod maxp;
+mod mvar;
 mod name;
 mod offset;
 mod offset_array;
@@ -110,6 +111,7 @@ use write_fonts::{
             hvar::Hvar,
             loca::Loca,
             maxp::Maxp,
+            mvar::Mvar,
             name::Name,
             os2::Os2,
             post::Post,
@@ -1838,6 +1840,15 @@ fn subset_table<'a>(
         //Skip, handled by Vmtx
         Vhea::TAG => Ok(()),
 
+        Mvar::TAG => {
+            if plan.axes_index_map.is_empty() && !plan.all_axes_pinned {
+                passthrough_table(tag, font, s)
+            } else {
+                font.mvar()
+                    .map_err(|_| SubsetError::SubsetTableError(Mvar::TAG))?
+                    .subset(plan, font, s, builder)
+            }
+        }
         Vmtx::TAG => font
             .vmtx()
             .map_err(|_| SubsetError::SubsetTableError(Vmtx::TAG))?
