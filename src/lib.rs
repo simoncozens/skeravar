@@ -270,6 +270,9 @@ impl SubsetFlags {
     /// If set do not pull mirrored versions of input codepoints into the subset.
     pub const SUBSET_FLAGS_NO_BIDI_CLOSURE: Self = Self(0x0800);
 
+    //If set force the use of long format in the 'loca' table even if the offsets would fit in the short format.
+    pub const SUBSET_FLAGS_FORCE_LONG_LOCA: Self = Self(0x0800);
+
     /// Returns `true` if all of the flags in `other` are contained within `self`.
     #[inline]
     pub const fn contains(&self, other: Self) -> bool {
