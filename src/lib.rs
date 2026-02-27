@@ -6,6 +6,7 @@ mod cblc;
 mod cmap;
 mod colr;
 mod cpal;
+mod cvar;
 mod deltas;
 mod fnv;
 mod fvar;
@@ -1838,6 +1839,16 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Cpal::TAG))?
             .subset(plan, font, s, builder),
 
+        Cvar::TAG => {
+            if plan.axes_index_map.is_empty() && !plan.all_axes_pinned {
+                passthrough_table(tag, font, s)
+            } else {
+                font.cvar()
+                    .map_err(|_| SubsetError::SubsetTableError(Cvar::TAG))?
+                    .subset(plan, font, s, builder)
+            }
+        }
+
         Fvar::TAG => {
             if plan.axes_index_map.is_empty() && !plan.all_axes_pinned {
                 passthrough_table(tag, font, s)
@@ -1916,7 +1927,6 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Vvar::TAG))?
             .subset(plan, font, s, builder),
 
-        Cvar::TAG => passthrough_table(tag, font, s),
         // CVT: not supported by read-fonts, but we want to pass through it during subsetting
         CVT => passthrough_table(tag, font, s),
 
