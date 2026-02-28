@@ -49,13 +49,13 @@ use crate::{
         composite_glyph as composite_glyph_deltas, simple_glyph as simple_glyph_deltas,
         SimpleGlyph as SimpleGlyphForDeltas,
     },
-    glyf_loca::{ContourPoint, ContourPoints, PHANTOM_POINT_COUNT},
+    glyf_loca::{ContourPoints, PHANTOM_POINT_COUNT},
     head::HeadMaxpInfo,
     parsing_util::InstancingSpec,
     repack::resolve_overflows,
     variations::solver::{Triple, TripleDistances},
 };
-use font_types::Point;
+use font_types::{Offset16, Point};
 use gdef::CollectUsedMarkSets;
 use inc_bimap::IncBiMap;
 use layout::{
@@ -66,14 +66,11 @@ pub use parsing_util::{
     parse_instancing_spec, parse_name_ids, parse_name_languages, parse_tag_list, parse_unicodes,
     populate_gids,
 };
-use std::cell::RefCell;
 use unicode_closure::unicode_closure;
 
 use fnv::FnvHashMap;
 use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::{
-    instance::LocationRef,
-    prelude::Size,
     raw::{
         tables::{
             avar::Avar,
@@ -385,6 +382,23 @@ pub struct Plan {
     gsub_features_w_duplicates: FnvHashMap<u16, u16>,
     gpos_features_w_duplicates: FnvHashMap<u16, u16>,
 
+    // active feature variation records/condition index with variations
+    gsub_feature_record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
+    gpos_feature_record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
+
+    // feature index -> substituted lookup indices collected from feature variations
+    gsub_feature_substitutes_map: FnvHashMap<u16, IntSet<u16>>,
+    gpos_feature_substitutes_map: FnvHashMap<u16, IntSet<u16>>,
+
+    // old feature_indexes set, used to reinstate the old features
+    gsub_old_features: IntSet<u16>,
+    gpos_old_features: IntSet<u16>,
+
+    //feature_index->pair of (address of old feature, feature tag), used for inserting a catch all record
+    //if necessary
+    gsub_old_feature_idx_tag_map: FnvHashMap<usize, (Tag, Offset16)>,
+    gpos_old_feature_idx_tag_map: FnvHashMap<usize, (Tag, Offset16)>,
+
     // active old->new lookup index map
     gsub_lookups: FnvHashMap<u16, u16>,
     gpos_lookups: FnvHashMap<u16, u16>,
@@ -514,7 +528,9 @@ impl Plan {
             .expect("Could not get contour points for instance glyphs");
         this.get_instance_deltas(font)
             .expect("Could not get instance deltas");
-        this.collect_mvar_entries(font);
+        this.collect_mvar_entries(font)
+            .expect("Could not collect MVAR entries");
+        // log::debug!("Name IDS: {:?}", this.name_ids);
 
         this
     }
@@ -631,7 +647,6 @@ impl Plan {
                 .iter()
                 .map(|&v| v as f32 / 65536.0)
                 .collect();
-
             let defaults_16_16_float = avar::map_coords_2_14(&avar, defaults_16_16_float)?;
 
             // Convert back to 16.16 format
@@ -1209,7 +1224,7 @@ impl Plan {
         for (new_gid, old_gid) in self.new_to_old_gid_list.iter() {
             let glyph = loca.get_glyf(*old_gid, &glyf).unwrap();
             let coords = &self.normalized_coords_16_16;
-            log::debug!("Instantiating at coords (16.16): {:?}", coords);
+            // log::debug!("Instantiating at coords (16.16): {:?}", coords);
             match glyph {
                 Some(Glyph::Simple(simple_glyph)) => {
                     if simple_glyph.num_points() == 0 {
@@ -1609,7 +1624,7 @@ pub(crate) trait LayoutClosure {
         layout_scripts: &IntSet<Tag>,
     ) -> (FnvHashMap<u16, IntSet<u16>>, IntSet<u16>);
 
-    fn closure_glyphs_lookups_features(&self, plan: &mut Plan);
+    fn closure_glyphs_lookups_features(&self, plan: &mut Plan) -> Result<(), SubsetError>;
 }
 
 pub const CVT: Tag = Tag::new(b"cvt ");
