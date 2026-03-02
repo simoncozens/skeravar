@@ -3,11 +3,18 @@
 
 use crate::fnv::FnvHashMap;
 use core::slice::Iter;
+use std::fmt::{Debug, Formatter, Result};
 
 #[derive(Default)]
 pub(crate) struct IncBiMap {
     forw_map: FnvHashMap<u32, u32>,
     back_map: Vec<u32>,
+}
+
+impl Debug for IncBiMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        f.debug_map().entries(self.forw_map.iter()).finish()
+    }
 }
 
 impl IncBiMap {

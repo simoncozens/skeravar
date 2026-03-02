@@ -2,8 +2,9 @@
 
 use crate::{
     hvar::{serialize_index_maps, HvarVvarSubsetPlan, ListupIndexMaps},
-    offset::SerializeSubset,
+    offset::{SerializeCopy, SerializeSubset},
     serialize::{SerializeErrorFlags, Serializer},
+    variations::subset_itemvarstore_with_instancing,
     Plan, Serialize, Subset, SubsetError,
 };
 use write_fonts::{
@@ -47,18 +48,42 @@ impl<'a> Serialize<'a> for Vvar<'_> {
             .listup_index_maps()
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
-        let vvar_subset_plan = HvarVvarSubsetPlan::new(plan, &var_store, &index_maps)
+        let mut vvar_subset_plan = HvarVvarSubsetPlan::new(plan, &var_store, &index_maps)
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
         let var_store_offset_pos = s.embed(0_u32)?;
 
-        Offset32::serialize_subset(
-            &var_store,
-            s,
-            plan,
-            (vvar_subset_plan.inner_maps(), true),
-            var_store_offset_pos,
-        )?;
+        if !plan.normalized_coords.is_empty() {
+            let (bytes, varidx_map) = subset_itemvarstore_with_instancing(
+                var_store.clone(),
+                plan,
+                s,
+                vvar_subset_plan.inner_maps(),
+                true,
+                index_maps[0].is_some(),
+                false,
+            )?;
+
+            if index_maps[0].is_some() && !vvar_subset_plan.remap_index_map_plans(plan, &varidx_map)
+            {
+                return Err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER);
+            }
+
+            Offset32::serialize_copy_from_bytes(&bytes, s, var_store_offset_pos)?;
+        } else {
+            Offset32::serialize_subset(
+                &var_store,
+                s,
+                plan,
+                (
+                    vvar_subset_plan.inner_maps(),
+                    true,
+                    index_maps[0].is_some(),
+                    false,
+                ),
+                var_store_offset_pos,
+            )?;
+        }
 
         serialize_index_maps(
             s,
