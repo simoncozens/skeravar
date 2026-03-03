@@ -73,10 +73,9 @@ use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::{
     raw::{
         tables::{
-            avar::Avar,
             fvar::Fvar,
             glyf::PointFlags,
-            variations::{DeltaSetIndex, ItemVariationStore, NO_VARIATION_INDEX},
+            variations::{DeltaSetIndex, FloatItemDelta, ItemVariationStore, NO_VARIATION_INDEX},
         },
         ReadError,
     },
@@ -87,6 +86,7 @@ use write_fonts::{
     read::{
         collections::{int_set::Domain, IntSet},
         tables::{
+            avar::Avar,
             base::Base,
             cbdt::Cbdt,
             cblc::Cblc,
@@ -417,9 +417,12 @@ pub struct Plan {
     // COLR varstore retained varidx mapping
     colr_varstore_inner_maps: Vec<IncBiMap>,
     // COLR table old variation index -> (New varidx, new delta) mapping
-    colr_varidx_delta_map: FnvHashMap<u32, (u32, i32)>,
+    colr_varidx_delta_map: FnvHashMap<u32, (u32, FloatItemDelta)>,
     // COLR table new delta set index -> new var index mapping
-    colr_new_deltaset_idx_varidx_map: FnvHashMap<u32, u32>,
+    // Wrapped in RefCell to allow mutation during instantiation
+    colr_new_deltaset_idx_varidx_map: RefCell<FnvHashMap<u32, u32>>,
+    // COLR table old delta set index -> new delta set index mapping
+    colr_old_to_new_deltaset_idx_map: FnvHashMap<u32, u32>,
 
     os2_info: Os2Info,
 
@@ -956,7 +959,7 @@ impl Plan {
                         }
                     }
                 }
-                remap_variation_indices(
+                remap_variation_indices_float(
                     &var_store,
                     &variation_indices,
                     &self.normalized_coords,
@@ -972,18 +975,23 @@ impl Plan {
 
                 // if DeltaSetIndexMap exists, we need to use deltaset index instead of var_idx
                 if var_index_map.is_some() {
-                    let (new_deltaset_idx_varidx_map, deltaset_idx_delta_map) =
-                        remap_delta_set_indices(
-                            &delta_set_indices,
-                            &deltaset_idx_var_idx_map,
-                            &self.colr_varidx_delta_map,
-                        );
+                    let (
+                        new_deltaset_idx_varidx_map,
+                        old_to_new_deltaset_idx_map,
+                        _deltaset_idx_delta_map,
+                    ) = remap_delta_set_indices(
+                        &delta_set_indices,
+                        &deltaset_idx_var_idx_map,
+                        &self.colr_varidx_delta_map,
+                    );
                     let _ = std::mem::replace(
                         &mut self.colr_new_deltaset_idx_varidx_map,
-                        new_deltaset_idx_varidx_map,
+                        RefCell::new(new_deltaset_idx_varidx_map),
                     );
-                    let _ =
-                        std::mem::replace(&mut self.colr_varidx_delta_map, deltaset_idx_delta_map);
+                    let _ = std::mem::replace(
+                        &mut self.colr_old_to_new_deltaset_idx_map,
+                        old_to_new_deltaset_idx_map,
+                    );
                 }
             }
         } else {
@@ -1427,6 +1435,58 @@ fn remap_variation_indices(
     }
 }
 
+fn remap_variation_indices_float(
+    var_store: &ItemVariationStore,
+    varidx_set: &IntSet<u32>,
+    normalized_coords: &[F2Dot14],
+    calculate_delta: bool,
+    no_variations: bool,
+    varidx_delta_map: &mut FnvHashMap<u32, (u32, FloatItemDelta)>,
+) {
+    let vardata_count = var_store.item_variation_data_count() as u32;
+    if vardata_count == 0 || varidx_set.is_empty() {
+        return;
+    }
+
+    let mut new_major: u32 = 0;
+    let mut new_minor: u32 = 0;
+    let mut last_major = varidx_set.first().unwrap() >> 16;
+    for var_idx in varidx_set.iter() {
+        let major = var_idx >> 16;
+        if major >= vardata_count {
+            break;
+        }
+
+        if major != last_major {
+            new_minor = 0;
+            new_major += 1;
+        }
+
+        let mut delta = FloatItemDelta::ZERO;
+        if calculate_delta {
+            let index = DeltaSetIndex {
+                outer: major as u16,
+                inner: (var_idx & 0xFFFF) as u16,
+            };
+            if let Ok(value) = var_store.compute_float_delta(index, normalized_coords) {
+                delta = value;
+            }
+        }
+
+        let new_idx = if no_variations {
+            NO_VARIATION_INDEX
+        } else {
+            (new_major << 16) + new_minor
+        };
+        varidx_delta_map.insert(var_idx, (new_idx, delta));
+
+        if !no_variations {
+            new_minor += 1;
+        }
+        last_major = major;
+    }
+}
+
 fn generate_varstore_inner_maps(
     varidx_set: &IntSet<u32>,
     vardata_count: u32,
@@ -1450,31 +1510,39 @@ fn generate_varstore_inner_maps(
 //
 fn remap_delta_set_indices(
     delta_set_indices: &IntSet<u32>,
-    deltaset_idx_var_idx_map: &FnvHashMap<u32, u32>,
-    varidx_delta_map: &FnvHashMap<u32, (u32, i32)>,
-) -> (FnvHashMap<u32, u32>, FnvHashMap<u32, (u32, i32)>) {
+    deltaset_idx_var_idx_map: &DeltaSetIdxVarIdxMap,
+    varidx_delta_map: &FnvHashMap<u32, (u32, FloatItemDelta)>,
+) -> (
+    DeltaSetIdxVarIdxMap,
+    DeltaSetIdxVarIdxMap,
+    FnvHashMap<u32, (u32, FloatItemDelta)>,
+) {
     let mut new_deltaset_idx_varidx_map = FnvHashMap::default();
+    let mut old_to_new_deltaset_idx_map = FnvHashMap::default();
     let mut deltaset_idx_delta_map = FnvHashMap::default();
-    let mut new_idx = 0_u32;
 
-    for deltaset_idx in delta_set_indices.iter() {
-        let Some(&var_idx) = deltaset_idx_var_idx_map.get(&deltaset_idx) else {
+    for (new_deltaset_idx, deltaset_idx) in delta_set_indices.iter().enumerate() {
+        let Some(var_idx) = deltaset_idx_var_idx_map.get(&deltaset_idx) else {
             continue;
         };
+        let new_deltaset_idx = new_deltaset_idx as u32;
 
-        let (new_var_idx, delta) = if var_idx == NO_VARIATION_INDEX {
-            (var_idx, 0)
-        } else if let Some((new_idx, d)) = varidx_delta_map.get(&var_idx) {
-            (*new_idx, *d)
+        old_to_new_deltaset_idx_map.insert(deltaset_idx, new_deltaset_idx);
+
+        if let Some((new_var_idx, delta)) = varidx_delta_map.get(var_idx) {
+            // Store pre-instancing remapped varidx (old->new after subsetting), so
+            // subset_varstore() can further remap through item_vars.get_varidx_map().
+            new_deltaset_idx_varidx_map.insert(new_deltaset_idx, *new_var_idx);
+            deltaset_idx_delta_map.insert(deltaset_idx, (new_deltaset_idx, *delta));
         } else {
-            continue;
-        };
-
-        new_deltaset_idx_varidx_map.insert(new_idx, new_var_idx);
-        deltaset_idx_delta_map.insert(deltaset_idx, (new_idx, delta));
-        new_idx += 1;
+            new_deltaset_idx_varidx_map.insert(new_deltaset_idx, NO_VARIATION_INDEX);
+        }
     }
-    (new_deltaset_idx_varidx_map, deltaset_idx_delta_map)
+    (
+        new_deltaset_idx_varidx_map,
+        old_to_new_deltaset_idx_map,
+        deltaset_idx_delta_map,
+    )
 }
 
 /// glyph closure for Composite glyphs in glyf table

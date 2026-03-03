@@ -1,13 +1,13 @@
 //! impl subset() for COLR
-use crate::fnv::FnvHashMap;
-use crate::offset::SerializeSerialize;
 use crate::{
-    offset::SerializeSubset,
+    fnv::FnvHashMap,
+    offset::{SerializeCopy, SerializeSubset},
     offset_array::SubsetOffsetArray,
     serialize::{SerializeErrorFlags, Serializer},
-    variations::DeltaSetIndexMapSerializePlan,
+    variations::{itemvariations_to_varstore_bytes, DeltaSetIndexMapSerializePlan, ItemVariations},
     Plan, Subset, SubsetError, SubsetTable,
 };
+use font_types::{F2Dot14, FWord};
 use skrifa::raw::{tables::colr::Affine2x3, ResolveOffset};
 use write_fonts::{
     read::{
@@ -26,13 +26,95 @@ use write_fonts::{
                 PaintVarSkewAroundCenter, PaintVarSolid, PaintVarSweepGradient, PaintVarTransform,
                 PaintVarTranslate, VarAffine2x3, VarColorLine, VarColorStop,
             },
-            variations::{DeltaSetIndexMap, NO_VARIATION_INDEX},
+            variations::{
+                DeltaSetIndexMap, FloatItemDelta, FloatItemDeltaTarget, NO_VARIATION_INDEX,
+            },
         },
         FontRef, MinByteRange, TopLevelTable,
     },
     types::{GlyphId, Offset24, Offset32},
     FontBuilder,
 };
+
+/// Helper for applying deltas during COLR instantiation
+#[derive(Clone, Copy)]
+pub struct ColrInstancer<'a> {
+    delta_map: &'a FnvHashMap<u32, (u32, FloatItemDelta)>,
+    old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
+    delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
+    has_variations: bool,
+    all_axes_pinned: bool,
+}
+
+impl<'a> ColrInstancer<'a> {
+    pub fn new(
+        delta_map: &'a FnvHashMap<u32, (u32, FloatItemDelta)>,
+        old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
+        delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
+        has_variations: bool,
+        all_axes_pinned: bool,
+        _has_delta_set_index_map: bool,
+    ) -> Self {
+        Self {
+            delta_map,
+            old_to_new_deltaset_map,
+            delta_set_index_map,
+            has_variations,
+            all_axes_pinned,
+        }
+    }
+
+    pub fn remap_varidx(&self, old_varidx: u32) -> u32 {
+        if old_varidx == NO_VARIATION_INDEX {
+            return NO_VARIATION_INDEX;
+        }
+
+        if self.delta_set_index_map.is_some() {
+            if let Some(new_deltaset_idx) = self.old_to_new_deltaset_map.get(&old_varidx) {
+                *new_deltaset_idx
+            } else {
+                NO_VARIATION_INDEX
+            }
+        } else if let Some((new_varidx, _)) = self.delta_map.get(&old_varidx) {
+            *new_varidx
+        } else {
+            old_varidx
+        }
+    }
+
+    fn get_float_delta(&self, var_idx: u32, field_idx: usize) -> FloatItemDelta {
+        if !self.has_variations || var_idx == NO_VARIATION_INDEX || field_idx > 15 {
+            return FloatItemDelta::ZERO;
+        }
+
+        let actual_idx = var_idx.wrapping_add(field_idx as u32);
+        let lookup_idx = if let Some(map) = self.delta_set_index_map {
+            let Ok(mapped_entry) = map.get(actual_idx) else {
+                return FloatItemDelta::ZERO;
+            };
+            let mapped = ((mapped_entry.outer as u32) << 16) + mapped_entry.inner as u32;
+            if mapped == NO_VARIATION_INDEX {
+                return FloatItemDelta::ZERO;
+            }
+            mapped
+        } else {
+            actual_idx
+        };
+
+        self.delta_map
+            .get(&lookup_idx)
+            .map(|(_, delta)| *delta)
+            .unwrap_or(FloatItemDelta::ZERO)
+    }
+
+    pub fn get_design_delta(&self, var_idx: u32, field_idx: usize) -> f32 {
+        FWord::new(0).apply_float_delta(self.get_float_delta(var_idx, field_idx))
+    }
+
+    pub fn get_f2dot14_delta(&self, var_idx: u32, field_idx: usize) -> f32 {
+        F2Dot14::from_bits(0).apply_float_delta(self.get_float_delta(var_idx, field_idx))
+    }
+}
 
 // reference: subset() for COLR in Harfbuzz:
 // <https://github.com/harfbuzz/harfbuzz/blob/043980a60eb2fe93dd65b8c2f5eaa021fd8653f2/src/OT/Color/COLR/COLR.hh#L2414>
@@ -67,26 +149,28 @@ impl Subset for Colr<'_> {
         // set version to 1, format pos = 0
         s.copy_assign(0, 1_u16);
 
-        // var_store offset pos = 30
-        if let Some(var_store) = self
-            .item_variation_store()
+        // subset ItemVariationStore first, cause varidx_map needs to be updated
+        // after instancing
+        subset_varstore(self, plan, s).map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?;
+
+        let delta_set_index_map = self
+            .var_index_map()
             .transpose()
-            .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?
-        {
-            match Offset32::serialize_subset(
-                &var_store,
-                s,
-                plan,
-                (&plan.colr_varstore_inner_maps, false, true, true),
-                30,
-            ) {
-                Ok(()) | Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
-                Err(_) => return Err(SubsetError::SubsetTableError(Colr::TAG)),
-            }
-        }
+            .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?;
+
+        // Create instancer for applying deltas to Paint structures
+        let has_delta_set_index_map = delta_set_index_map.is_some();
+        let instancer = ColrInstancer::new(
+            &plan.colr_varidx_delta_map,
+            &plan.colr_old_to_new_deltaset_idx_map,
+            delta_set_index_map.as_ref(),
+            true,
+            !plan.normalized_coords.is_empty() && plan.all_axes_pinned,
+            has_delta_set_index_map,
+        );
 
         // BaseGlyphList offset pos = 14
-        Offset32::serialize_subset(&base_glyph_list.unwrap(), s, plan, (), 14)
+        Offset32::serialize_subset(&base_glyph_list.unwrap(), s, plan, instancer, 14)
             .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?;
 
         //LayerList offset pos = 18
@@ -95,7 +179,7 @@ impl Subset for Colr<'_> {
             .transpose()
             .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?
         {
-            match Offset32::serialize_subset(&layer_list, s, plan, (), 18) {
+            match Offset32::serialize_subset(&layer_list, s, plan, instancer, 18) {
                 Ok(()) | Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
                 Err(_) => {
                     return Err(SubsetError::SubsetTableError(Colr::TAG));
@@ -110,7 +194,7 @@ impl Subset for Colr<'_> {
             .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?
         {
             // cliplist could be empty after subsetting
-            match Offset32::serialize_subset(&clip_list, s, plan, (), 22) {
+            match Offset32::serialize_subset(&clip_list, s, plan, instancer, 22) {
                 Ok(()) | Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
                 Err(_) => {
                     return Err(SubsetError::SubsetTableError(Colr::TAG));
@@ -118,26 +202,112 @@ impl Subset for Colr<'_> {
             }
         }
 
-        //varIndexMap offset pos = 26
-        if self
-            .var_index_map()
-            .transpose()
-            .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?
-            .is_some()
+        subset_delta_set_index_map(self, plan, s)?;
+
+        Ok(())
+    }
+}
+
+fn subset_varstore(
+    colr: &Colr<'_>,
+    plan: &Plan,
+    s: &mut Serializer,
+) -> Result<(), SerializeErrorFlags> {
+    let Some(varstore) = colr
+        .item_variation_store()
+        .transpose()
+        .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
+    else {
+        return Ok(());
+    };
+
+    if !plan.normalized_coords.is_empty() {
+        // turn off varstore optimization when varIdxMap is null, so we maintain
+        // original var_idx sequence
+        let optimize = colr.var_index_map().is_some();
+        let mut item_vars = ItemVariations::create_from_item_varstore(
+            &varstore,
+            &plan.axes_old_index_tag_map,
+            &plan.colr_varstore_inner_maps,
+        )?;
+        item_vars.instantiate_tuple_vars(&plan.axes_location, &plan.axes_triple_distances)?;
+        item_vars.as_item_varstore(optimize, optimize)?;
+        // do not serialize varStore if there's no variation data after
+        // instancing: region_list or var_data is empty
+        if !item_vars.get_region_list().is_empty() && !item_vars.get_vardata_encodings().is_empty()
         {
-            if let Some(deltaset_index_map_subset_plan) =
-                create_deltaset_index_map_subset_plan(plan)
+            let (varstore_bytes, _varidx_map) =
+                itemvariations_to_varstore_bytes(&item_vars, &plan.axis_tags)?;
+            if !varstore_bytes.is_empty() {
+                Offset32::serialize_copy_from_bytes(&varstore_bytes, s, 30)?;
+            }
+        }
+
+        /* if varstore is optimized, update colrv1_new_deltaset_idx_varidx_map in
+         * subset plan.
+         * If varstore is empty after instancing, varidx_map would be empty and
+         * all var_idxes will be updated to VarIdx::NO_VARIATION */
+        if optimize {
+            let varidx_map = item_vars.get_varidx_map();
+            for new_varidx in plan
+                .colr_new_deltaset_idx_varidx_map
+                .borrow_mut()
+                .values_mut()
             {
-                Offset32::serialize_serialize::<DeltaSetIndexMap>(
-                    s,
-                    &deltaset_index_map_subset_plan,
-                    26,
-                )
-                .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?;
+                let old_varidx = *new_varidx;
+                if let Some(&mapped_varidx) = varidx_map.get(&old_varidx) {
+                    *new_varidx = mapped_varidx;
+                } else {
+                    *new_varidx = NO_VARIATION_INDEX;
+                }
             }
         }
         Ok(())
+    } else {
+        // Just serialize as is
+        Offset32::serialize_subset(
+            &varstore,
+            s,
+            plan,
+            (&plan.colr_varstore_inner_maps, false, true, true),
+            30,
+        )
     }
+}
+
+fn subset_delta_set_index_map(
+    colr: &Colr<'_>,
+    plan: &Plan,
+    s: &mut Serializer,
+) -> Result<(), SubsetError> {
+    if colr.var_index_map().is_none()
+        || plan.all_axes_pinned
+        || plan.colr_new_deltaset_idx_varidx_map.borrow().is_empty()
+    {
+        return Ok(());
+    }
+
+    //varIndexMap offset pos = 26
+    if let Some(var_index_map) = colr
+        .var_index_map()
+        .transpose()
+        .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?
+    {
+        let map = plan.colr_new_deltaset_idx_varidx_map.borrow().clone();
+        let deltaset_plan = create_deltaset_index_map_subset_plan_from_map(&map);
+
+        if let Some(deltaset_index_map_subset_plan) = deltaset_plan {
+            Offset32::serialize_subset(
+                &var_index_map,
+                s,
+                plan,
+                &deltaset_index_map_subset_plan,
+                26,
+            )
+            .map_err(|_| SubsetError::SubsetTableError(Colr::TAG))?;
+        }
+    }
+    Ok(())
 }
 
 // serialize header and V0 tables, format is decided by subset_to_v0 flag
@@ -308,15 +478,15 @@ impl<'a> SubsetTable<'a> for &[Layer] {
     }
 }
 
-impl SubsetTable<'_> for BaseGlyphList<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for BaseGlyphList<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         // num BaseGlyphPaint initialized to 0
         let num_pos = s.embed(0_u32)?;
@@ -332,7 +502,7 @@ impl SubsetTable<'_> for BaseGlyphList<'_> {
             {
                 continue;
             }
-            paint_record.subset(plan, s, self)?;
+            paint_record.subset(plan, s, (self, instancer))?;
             num += 1;
         }
 
@@ -342,15 +512,16 @@ impl SubsetTable<'_> for BaseGlyphList<'_> {
 }
 
 impl<'a> SubsetTable<'a> for BaseGlyphPaint {
-    type ArgsForSubset = &'a BaseGlyphList<'a>;
+    type ArgsForSubset = (&'a BaseGlyphList<'a>, ColrInstancer<'a>);
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        base_glyph_list: &BaseGlyphList,
+        args: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
+        let (base_glyph_list, instancer) = args;
         let old_gid = GlyphId::from(self.glyph_id());
         let Some(new_gid) = plan.glyph_map.get(&old_gid) else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
@@ -362,19 +533,19 @@ impl<'a> SubsetTable<'a> for BaseGlyphPaint {
         let Ok(paint) = self.paint(base_glyph_list.offset_data()) else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset32::serialize_subset(&paint, s, plan, (), offset_pos)
+        Offset32::serialize_subset(&paint, s, plan, instancer, offset_pos)
     }
 }
 
-impl SubsetTable<'_> for LayerList<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for LayerList<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         let layers_map = &plan.colrv1_layers;
         if layers_map.is_empty() {
@@ -388,21 +559,21 @@ impl SubsetTable<'_> for LayerList<'_> {
             if !layers_map.contains_key(&idx) {
                 continue;
             }
-            paint_offsets.subset_offset(idx as usize, s, plan, ())?;
+            paint_offsets.subset_offset(idx as usize, s, plan, instancer)?;
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for ClipList<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ClipList<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         let glyph_set = &plan.glyphset_colred;
         let glyph_map = &plan.glyph_map;
@@ -443,7 +614,14 @@ impl SubsetTable<'_> for ClipList<'_> {
 
         s.embed(self.format())?;
         let num_clips_pos = s.embed(0_u32)?;
-        let num_clips = serialize_clips(self, s, plan, &new_gids_set, &new_gids_offset_map)?;
+        let num_clips = serialize_clips(
+            self,
+            s,
+            plan,
+            &new_gids_set,
+            &new_gids_offset_map,
+            instancer,
+        )?;
         s.copy_assign(num_clips_pos, num_clips);
         Ok(())
     }
@@ -455,6 +633,7 @@ fn serialize_clips(
     plan: &Plan,
     gids_set: &IntSet<u16>,
     gids_offset_map: &FnvHashMap<u16, Offset24>,
+    args: ColrInstancer<'_>,
 ) -> Result<u32, SerializeErrorFlags> {
     let mut count = 0;
 
@@ -476,7 +655,7 @@ fn serialize_clips(
             .resolve(clip_list.offset_data())
             .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?;
 
-        serialize_clip(s, plan, start_gid, prev_gid, &clip_box)?;
+        serialize_clip(s, plan, start_gid, prev_gid, &clip_box, args)?;
         count += 1;
 
         start_gid = g;
@@ -489,7 +668,7 @@ fn serialize_clips(
         .resolve(clip_list.offset_data())
         .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?;
 
-    serialize_clip(s, plan, start_gid, prev_gid, &clip_box)?;
+    serialize_clip(s, plan, start_gid, prev_gid, &clip_box, args)?;
     count += 1;
 
     Ok(count)
@@ -501,15 +680,16 @@ fn serialize_clip(
     start: u16,
     end: u16,
     clip_box: &ClipBox,
+    args: ColrInstancer,
 ) -> Result<(), SerializeErrorFlags> {
     s.embed(start)?;
     s.embed(end)?;
     let offset_pos = s.embed_bytes(&[0_u8; 3])?;
-    Offset24::serialize_subset(clip_box, s, plan, (), offset_pos)
+    Offset24::serialize_subset(clip_box, s, plan, args, offset_pos)
 }
 
-impl SubsetTable<'_> for ClipBox<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ClipBox<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -525,8 +705,8 @@ impl SubsetTable<'_> for ClipBox<'_> {
     }
 }
 
-impl SubsetTable<'_> for ClipBoxFormat1<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ClipBoxFormat1<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -539,45 +719,49 @@ impl SubsetTable<'_> for ClipBoxFormat1<'_> {
     }
 }
 
-impl SubsetTable<'_> for ClipBoxFormat2<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ClipBoxFormat2<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
-        plan: &Plan,
+        _plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         let start_pos = s.embed_bytes(self.min_table_bytes())?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             s.copy_assign(
                 start_pos + self.var_index_base_byte_range().start,
-                *new_varidx,
+                new_varidx,
             );
         }
         Ok(())
     }
 }
 
-fn create_deltaset_index_map_subset_plan(plan: &Plan) -> Option<DeltaSetIndexMapSerializePlan<'_>> {
-    let deltaset_idx_varidx_map = &plan.colr_new_deltaset_idx_varidx_map;
-    let count = deltaset_idx_varidx_map.len();
-    if count == 0 {
+fn create_deltaset_index_map_subset_plan_from_map(
+    deltaset_idx_varidx_map: &FnvHashMap<u32, u32>,
+) -> Option<DeltaSetIndexMapSerializePlan<'_>> {
+    if deltaset_idx_varidx_map.is_empty() {
         return None;
     }
 
-    let mut last_idx = count as u32 - 1;
-    let last_varidx = deltaset_idx_varidx_map.get(&last_idx).unwrap();
+    let mut last_idx = deltaset_idx_varidx_map.keys().copied().max()?;
+    let last_varidx = deltaset_idx_varidx_map
+        .get(&last_idx)
+        .copied()
+        .unwrap_or(NO_VARIATION_INDEX);
 
     for i in (0..last_idx).rev() {
-        let var_idx = deltaset_idx_varidx_map.get(&i).unwrap();
+        let var_idx = deltaset_idx_varidx_map
+            .get(&i)
+            .copied()
+            .unwrap_or(NO_VARIATION_INDEX);
         if var_idx != last_varidx {
             break;
         }
@@ -588,7 +772,10 @@ fn create_deltaset_index_map_subset_plan(plan: &Plan) -> Option<DeltaSetIndexMap
     let mut inner_bit_count = 1;
 
     for idx in 0..map_count {
-        let var_idx = deltaset_idx_varidx_map.get(&idx).unwrap();
+        let var_idx = deltaset_idx_varidx_map
+            .get(&idx)
+            .copied()
+            .unwrap_or(NO_VARIATION_INDEX);
 
         let outer = var_idx >> 16;
         let bit_count = 32 - outer.leading_zeros();
@@ -598,23 +785,26 @@ fn create_deltaset_index_map_subset_plan(plan: &Plan) -> Option<DeltaSetIndexMap
         let bit_count = 32 - inner.leading_zeros();
         inner_bit_count = inner_bit_count.max(bit_count);
     }
-    Some(DeltaSetIndexMapSerializePlan::new(
-        outer_bit_count as u8,
-        inner_bit_count as u8,
-        &plan.colr_new_deltaset_idx_varidx_map,
-        map_count,
-    ))
+    Some(
+        DeltaSetIndexMapSerializePlan::new(
+            outer_bit_count as u8,
+            inner_bit_count as u8,
+            deltaset_idx_varidx_map,
+            map_count,
+        )
+        .with_missing_entry_value(NO_VARIATION_INDEX),
+    )
 }
 
-impl SubsetTable<'_> for ColorStop {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ColorStop {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        _instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         s.embed(self.stop_offset())?;
         let palette_idx = self.palette_index();
@@ -626,25 +816,49 @@ impl SubsetTable<'_> for ColorStop {
     }
 }
 
-impl SubsetTable<'_> for VarColorStop {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for VarColorStop {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
-        s.embed(self.stop_offset())?;
+        let varidx_base = self.var_index_base();
+
+        let stop_offset = if instancer.has_variations && varidx_base != NO_VARIATION_INDEX {
+            let bits = self.stop_offset().to_bits() as f32
+                + instancer.get_f2dot14_delta(varidx_base, 0) * 16384.0;
+            let bits = bits.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16;
+            F2Dot14::from_bits(bits)
+        } else {
+            self.stop_offset()
+        };
+        s.embed(stop_offset)?;
+
         let palette_idx = self.palette_index();
         let Some(new_idx) = plan.colr_palettes.get(&palette_idx) else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
         };
         s.embed(*new_idx)?;
-        s.embed(self.alpha())?;
 
-        let varidx_base = self.var_index_base();
+        let alpha = if instancer.has_variations && varidx_base != NO_VARIATION_INDEX {
+            let bits = self.alpha().to_bits() as f32
+                + instancer.get_f2dot14_delta(varidx_base, 1) * 16384.0;
+            let bits = bits.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16;
+            F2Dot14::from_bits(bits)
+        } else {
+            self.alpha()
+        };
+        s.embed(alpha)?;
+
+        // Emit as non-var ColorStop only when all axes are pinned.
+        if instancer.all_axes_pinned {
+            return Ok(());
+        }
+
         if varidx_base != NO_VARIATION_INDEX {
             let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
                 return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
@@ -657,48 +871,48 @@ impl SubsetTable<'_> for VarColorStop {
     }
 }
 
-impl SubsetTable<'_> for ColorLine<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for ColorLine<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         s.embed(self.extend())?;
         s.embed(self.num_stops())?;
 
         for stop in self.color_stops() {
-            stop.subset(plan, s, ())?;
+            stop.subset(plan, s, instancer)?;
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for VarColorLine<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for VarColorLine<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
         s.embed(self.extend())?;
         s.embed(self.num_stops())?;
 
         for stop in self.color_stops() {
-            stop.subset(plan, s, ())?;
+            stop.subset(plan, s, instancer)?;
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for Paint<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for Paint<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -744,15 +958,15 @@ impl SubsetTable<'_> for Paint<'_> {
     }
 }
 
-impl SubsetTable<'_> for PaintColrLayers<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintColrLayers<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        _instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         let start_pos = s.embed_bytes(self.min_table_bytes())?;
 
@@ -771,15 +985,15 @@ impl SubsetTable<'_> for PaintColrLayers<'_> {
     }
 }
 
-impl SubsetTable<'_> for PaintSolid<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintSolid<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        _instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         let start_pos = s.embed_bytes(self.min_table_bytes())?;
         let palette_idx = self.palette_index();
@@ -791,15 +1005,15 @@ impl SubsetTable<'_> for PaintSolid<'_> {
     }
 }
 
-impl SubsetTable<'_> for PaintVarSolid<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarSolid<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        _instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         let start_pos = s.embed_bytes(self.min_table_bytes())?;
         let palette_idx = self.palette_index();
@@ -810,25 +1024,21 @@ impl SubsetTable<'_> for PaintVarSolid<'_> {
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
-            // update VarIdxBase
-            s.copy_assign(start_pos + 5, *new_varidx);
+            s.copy_assign(start_pos + 5, _instancer.remap_varidx(varidx_base));
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintLinearGradient<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintLinearGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.color_line_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -838,19 +1048,19 @@ impl SubsetTable<'_> for PaintLinearGradient<'_> {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
         //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarLinearGradient<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarLinearGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.color_line_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -860,134 +1070,171 @@ impl SubsetTable<'_> for PaintVarLinearGradient<'_> {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
         //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)?;
+
+        let varidx_base = self.var_index_base();
+        if instancer.has_variations && varidx_base != NO_VARIATION_INDEX {
+            let x0 = self.x0().to_i16() as f32 + instancer.get_design_delta(varidx_base, 0);
+            let y0 = self.y0().to_i16() as f32 + instancer.get_design_delta(varidx_base, 1);
+            let x1 = self.x1().to_i16() as f32 + instancer.get_design_delta(varidx_base, 2);
+            let y1 = self.y1().to_i16() as f32 + instancer.get_design_delta(varidx_base, 3);
+            let x2 = self.x2().to_i16() as f32 + instancer.get_design_delta(varidx_base, 4);
+            let y2 = self.y2().to_i16() as f32 + instancer.get_design_delta(varidx_base, 5);
+
+            s.copy_assign(start_pos + self.x0_byte_range().start, x0.round() as i16);
+            s.copy_assign(start_pos + self.y0_byte_range().start, y0.round() as i16);
+            s.copy_assign(start_pos + self.x1_byte_range().start, x1.round() as i16);
+            s.copy_assign(start_pos + self.y1_byte_range().start, y1.round() as i16);
+            s.copy_assign(start_pos + self.x2_byte_range().start, x2.round() as i16);
+            s.copy_assign(start_pos + self.y2_byte_range().start, y2.round() as i16);
+
+            let pos = start_pos + self.var_index_base_byte_range().start;
+            if instancer.all_axes_pinned {
+                s.copy_assign(start_pos, 4_u8);
+                s.copy_assign(pos, NO_VARIATION_INDEX);
+            } else {
+                let new_varidx = instancer.remap_varidx(varidx_base);
+                s.copy_assign(pos, new_varidx);
+            }
+        } else if varidx_base != NO_VARIATION_INDEX {
+            let new_varidx = instancer.remap_varidx(varidx_base);
+            let pos = start_pos + self.var_index_base_byte_range().start;
+            s.copy_assign(pos, new_varidx);
+        }
+        Ok(())
+    }
+}
+
+impl<'a> SubsetTable<'a> for PaintRadialGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
+    type Output = ();
+
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        instancer: Self::ArgsForSubset,
+    ) -> Result<(), SerializeErrorFlags> {
+        let start_pos = s.embed_bytes(self.min_table_bytes())?;
+
+        let Ok(color_line) = self.color_line() else {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+        };
+        //colorline offset pos = 1
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)
+    }
+}
+
+impl<'a> SubsetTable<'a> for PaintVarRadialGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
+    type Output = ();
+
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        instancer: Self::ArgsForSubset,
+    ) -> Result<(), SerializeErrorFlags> {
+        let start_pos = s.embed_bytes(self.min_table_bytes())?;
+
+        let Ok(color_line) = self.color_line() else {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+        };
+        //colorline offset pos = 1
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)?;
+
+        let varidx_base = self.var_index_base();
+        if instancer.has_variations && varidx_base != NO_VARIATION_INDEX {
+            let x0 = self.x0().to_i16() as f32 + instancer.get_design_delta(varidx_base, 0);
+            let y0 = self.y0().to_i16() as f32 + instancer.get_design_delta(varidx_base, 1);
+            let radius0 =
+                self.radius0().to_u16() as f32 + instancer.get_design_delta(varidx_base, 2);
+            let x1 = self.x1().to_i16() as f32 + instancer.get_design_delta(varidx_base, 3);
+            let y1 = self.y1().to_i16() as f32 + instancer.get_design_delta(varidx_base, 4);
+            let radius1 =
+                self.radius1().to_u16() as f32 + instancer.get_design_delta(varidx_base, 5);
+
+            s.copy_assign(start_pos + self.x0_byte_range().start, x0.round() as i16);
+            s.copy_assign(start_pos + self.y0_byte_range().start, y0.round() as i16);
+            s.copy_assign(
+                start_pos + self.radius0_byte_range().start,
+                radius0.round() as u16,
+            );
+            s.copy_assign(start_pos + self.x1_byte_range().start, x1.round() as i16);
+            s.copy_assign(start_pos + self.y1_byte_range().start, y1.round() as i16);
+            s.copy_assign(
+                start_pos + self.radius1_byte_range().start,
+                radius1.round() as u16,
+            );
+
+            let pos = start_pos + self.var_index_base_byte_range().start;
+            if instancer.all_axes_pinned {
+                s.copy_assign(start_pos, 6_u8);
+                s.copy_assign(pos, NO_VARIATION_INDEX);
+            } else {
+                let new_varidx = instancer.remap_varidx(varidx_base);
+                s.copy_assign(pos, new_varidx);
+            }
+        } else if varidx_base != NO_VARIATION_INDEX {
+            let new_varidx = instancer.remap_varidx(varidx_base);
+            let pos = start_pos + self.var_index_base_byte_range().start;
+            s.copy_assign(pos, new_varidx);
+        }
+        Ok(())
+    }
+}
+
+impl<'a> SubsetTable<'a> for PaintSweepGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
+    type Output = ();
+
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        instancer: Self::ArgsForSubset,
+    ) -> Result<(), SerializeErrorFlags> {
+        let start_pos = s.embed_bytes(self.min_table_bytes())?;
+
+        let Ok(color_line) = self.color_line() else {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+        };
+        //colorline offset pos = 1
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)
+    }
+}
+
+impl<'a> SubsetTable<'a> for PaintVarSweepGradient<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
+    type Output = ();
+
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        instancer: Self::ArgsForSubset,
+    ) -> Result<(), SerializeErrorFlags> {
+        let start_pos = s.embed_bytes(self.min_table_bytes())?;
+
+        let Ok(color_line) = self.color_line() else {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+        };
+        //colorline offset pos = 1
+        Offset24::serialize_subset(&color_line, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintRadialGradient<'_> {
-    type ArgsForSubset = ();
-    type Output = ();
-
-    fn subset(
-        &self,
-        plan: &Plan,
-        s: &mut Serializer,
-        _args: Self::ArgsForSubset,
-    ) -> Result<(), SerializeErrorFlags> {
-        if self.color_line_offset().is_null() {
-            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-        }
-        let start_pos = s.embed_bytes(self.min_table_bytes())?;
-        let Ok(color_line) = self.color_line() else {
-            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
-        };
-        //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)
-    }
-}
-
-impl SubsetTable<'_> for PaintVarRadialGradient<'_> {
-    type ArgsForSubset = ();
-    type Output = ();
-
-    fn subset(
-        &self,
-        plan: &Plan,
-        s: &mut Serializer,
-        _args: Self::ArgsForSubset,
-    ) -> Result<(), SerializeErrorFlags> {
-        if self.color_line_offset().is_null() {
-            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-        }
-        let start_pos = s.embed_bytes(self.min_table_bytes())?;
-        let Ok(color_line) = self.color_line() else {
-            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
-        };
-        //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)?;
-
-        let varidx_base = self.var_index_base();
-        if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
-            // update VarIdxBase
-            let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
-        }
-        Ok(())
-    }
-}
-
-impl SubsetTable<'_> for PaintSweepGradient<'_> {
-    type ArgsForSubset = ();
-    type Output = ();
-
-    fn subset(
-        &self,
-        plan: &Plan,
-        s: &mut Serializer,
-        _args: Self::ArgsForSubset,
-    ) -> Result<(), SerializeErrorFlags> {
-        if self.color_line_offset().is_null() {
-            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-        }
-        let start_pos = s.embed_bytes(self.min_table_bytes())?;
-        let Ok(color_line) = self.color_line() else {
-            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
-        };
-        //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)
-    }
-}
-
-impl SubsetTable<'_> for PaintVarSweepGradient<'_> {
-    type ArgsForSubset = ();
-    type Output = ();
-
-    fn subset(
-        &self,
-        plan: &Plan,
-        s: &mut Serializer,
-        _args: Self::ArgsForSubset,
-    ) -> Result<(), SerializeErrorFlags> {
-        if self.color_line_offset().is_null() {
-            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-        }
-        let start_pos = s.embed_bytes(self.min_table_bytes())?;
-
-        let Ok(color_line) = self.color_line() else {
-            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
-        };
-        //colorline offset pos = 1
-        Offset24::serialize_subset(&color_line, s, plan, (), start_pos + 1)?;
-
-        let varidx_base = self.var_index_base();
-        if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
-            // update VarIdxBase
-            let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
-        }
-        Ok(())
-    }
-}
-
-impl SubsetTable<'_> for PaintGlyph<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintGlyph<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1011,12 +1258,12 @@ impl SubsetTable<'_> for PaintGlyph<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), offset_pos)
+        Offset24::serialize_subset(&paint, s, plan, _args, offset_pos)
     }
 }
 
-impl SubsetTable<'_> for PaintColrGlyph<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintColrGlyph<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1035,8 +1282,8 @@ impl SubsetTable<'_> for PaintColrGlyph<'_> {
     }
 }
 
-impl SubsetTable<'_> for Affine2x3<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for Affine2x3<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1049,32 +1296,30 @@ impl SubsetTable<'_> for Affine2x3<'_> {
     }
 }
 
-impl SubsetTable<'_> for VarAffine2x3<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for VarAffine2x3<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         let start_pos = s.embed_bytes(self.min_table_bytes())?;
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintTransform<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintTransform<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1094,17 +1339,17 @@ impl SubsetTable<'_> for PaintTransform<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), paint_pos)?;
+        Offset24::serialize_subset(&paint, s, plan, _args, paint_pos)?;
 
         let Ok(affine) = self.transform() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&affine, s, plan, (), transform_pos)
+        Offset24::serialize_subset(&affine, s, plan, _args, transform_pos)
     }
 }
 
-impl SubsetTable<'_> for PaintVarTransform<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarTransform<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1124,17 +1369,17 @@ impl SubsetTable<'_> for PaintVarTransform<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), paint_pos)?;
+        Offset24::serialize_subset(&paint, s, plan, _args, paint_pos)?;
 
         let Ok(affine) = self.transform() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&affine, s, plan, (), transform_pos)
+        Offset24::serialize_subset(&affine, s, plan, _args, transform_pos)
     }
 }
 
-impl SubsetTable<'_> for PaintTranslate<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintTranslate<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1150,19 +1395,19 @@ impl SubsetTable<'_> for PaintTranslate<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarTranslate<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarTranslate<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1171,23 +1416,21 @@ impl SubsetTable<'_> for PaintVarTranslate<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintScale<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintScale<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1203,19 +1446,19 @@ impl SubsetTable<'_> for PaintScale<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarScale<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarScale<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1224,23 +1467,21 @@ impl SubsetTable<'_> for PaintVarScale<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintScaleAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintScaleAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1256,19 +1497,19 @@ impl SubsetTable<'_> for PaintScaleAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarScaleAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarScaleAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1277,23 +1518,21 @@ impl SubsetTable<'_> for PaintVarScaleAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintScaleUniform<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintScaleUniform<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1309,19 +1548,19 @@ impl SubsetTable<'_> for PaintScaleUniform<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarScaleUniform<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarScaleUniform<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1330,23 +1569,21 @@ impl SubsetTable<'_> for PaintVarScaleUniform<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintScaleUniformAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintScaleUniformAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1362,19 +1599,19 @@ impl SubsetTable<'_> for PaintScaleUniformAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarScaleUniformAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarScaleUniformAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1383,23 +1620,21 @@ impl SubsetTable<'_> for PaintVarScaleUniformAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintRotate<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintRotate<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1415,19 +1650,19 @@ impl SubsetTable<'_> for PaintRotate<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarRotate<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarRotate<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1436,23 +1671,21 @@ impl SubsetTable<'_> for PaintVarRotate<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintRotateAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintRotateAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1468,19 +1701,19 @@ impl SubsetTable<'_> for PaintRotateAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarRotateAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarRotateAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1489,23 +1722,21 @@ impl SubsetTable<'_> for PaintVarRotateAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintSkew<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintSkew<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1521,19 +1752,19 @@ impl SubsetTable<'_> for PaintSkew<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarSkew<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarSkew<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1542,23 +1773,21 @@ impl SubsetTable<'_> for PaintVarSkew<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintSkewAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintSkewAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
@@ -1574,19 +1803,19 @@ impl SubsetTable<'_> for PaintSkewAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)
+        Offset24::serialize_subset(&paint, s, plan, _args, start_pos + 1)
     }
 }
 
-impl SubsetTable<'_> for PaintVarSkewAroundCenter<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintVarSkewAroundCenter<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        instancer: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         if self.paint_offset().is_null() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -1595,30 +1824,28 @@ impl SubsetTable<'_> for PaintVarSkewAroundCenter<'_> {
         let Ok(paint) = self.paint() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
-        Offset24::serialize_subset(&paint, s, plan, (), start_pos + 1)?;
+        Offset24::serialize_subset(&paint, s, plan, instancer, start_pos + 1)?;
 
         let varidx_base = self.var_index_base();
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
             let pos = start_pos + self.var_index_base_byte_range().start;
-            s.copy_assign(pos, *new_varidx);
+            s.copy_assign(pos, new_varidx);
         }
         Ok(())
     }
 }
 
-impl SubsetTable<'_> for PaintComposite<'_> {
-    type ArgsForSubset = ();
+impl<'a> SubsetTable<'a> for PaintComposite<'_> {
+    type ArgsForSubset = ColrInstancer<'a>;
     type Output = ();
 
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
-        _args: Self::ArgsForSubset,
+        args: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
         let source_paint_offset = self.source_paint_offset();
         let backdrop_paint_offset = self.backdrop_paint_offset();
@@ -1634,7 +1861,7 @@ impl SubsetTable<'_> for PaintComposite<'_> {
             let Ok(src_paint) = self.source_paint() else {
                 return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
             };
-            match Offset24::serialize_subset(&src_paint, s, plan, (), src_paint_pos) {
+            match Offset24::serialize_subset(&src_paint, s, plan, args, src_paint_pos) {
                 Ok(()) | Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
                 Err(e) => return Err(e),
             }
@@ -1644,7 +1871,7 @@ impl SubsetTable<'_> for PaintComposite<'_> {
             let Ok(backdrop_paint) = self.backdrop_paint() else {
                 return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
             };
-            match Offset24::serialize_subset(&backdrop_paint, s, plan, (), backdrop_paint_pos) {
+            match Offset24::serialize_subset(&backdrop_paint, s, plan, args, backdrop_paint_pos) {
                 Ok(()) | Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => return Ok(()),
                 Err(e) => return Err(e),
             }
