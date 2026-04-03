@@ -28,8 +28,9 @@ cli = ["clap"]
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"], optional = true }
 font-types.workspace = true
-hashbrown = { version = "0.17.0", default-features = false, features = ["inline-more"] }
-font-types = { workspace = true }
+hashbrown = { version = "0.17.0", default-features = false, features = [
+    "inline-more",
+] }
 log = "0.4.29"
 num-traits = "0.2.18"
 regex = "1.10.4"
