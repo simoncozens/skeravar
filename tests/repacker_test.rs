@@ -98,7 +98,7 @@ impl RepackerTestCase {
 #[rstest]
 #[ignore = r#"Slow integration test, see https://github.com/googlefonts/fontations/issues/1910.
 To run manually: cargo test -p skera -- --ignored"#]
-fn test_repacker_case(#[files("test-data/repacker_tests/*.tests")] path: PathBuf) {
+fn test_repacker_case(#[files("test-data/repack_tests/*.tests")] path: PathBuf) {
     let test = RepackerTestCase::new(&path);
     test.run();
 }

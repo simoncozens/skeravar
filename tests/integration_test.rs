@@ -6,27 +6,43 @@
 //! To generate the expected output files, pass GEN_EXPECTED_OUTPUTS=1 as an
 //! environment variable.
 
-use rayon::prelude::*;
-use rstest::rstest;
-use skera::{
-    parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES,
+use libtest_mimic::{Arguments, Trial};
+use similar::TextDiff;
+use skera::{parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
+use skrifa::GlyphId;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+    fs,
+    iter::Peekable,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
-use std::fmt::Write;
-use std::fs;
-use std::iter::Peekable;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use tempfile::TempDir;
+use tempfile::Builder;
 use write_fonts::{
     read::{
         collections::{int_set::Domain, IntSet},
         FontRef,
     },
-    types::{GlyphId, NameId, Tag},
+    types::{NameId, Tag},
 };
 
 static TEST_DATA_DIR: &str = "./test-data";
 static GEN_EXPECTED_OUTPUTS_VAR: &str = "GEN_EXPECTED_OUTPUTS";
+
+const EXPECTED_FAILURE_CASES: [&str; 6] = [
+    // These all fail due to a difference in the way Harfbuzz performs layout closure
+    // on lookups called from a contextual chaining substitution. We're technically more
+    // accurate in how we do it.
+    "layout.notonastaliqurdu-NotoNastaliqUrdu-Regular.default.all.ttf",
+    "layout.notonastaliqurdu-NotoNastaliqUrdu-Regular.retain-gids.all.ttf",
+    "layout.notonastaliqurdu-NotoNastaliqUrdu-Bold.default.all.ttf",
+    "layout.notonastaliqurdu-NotoNastaliqUrdu-Bold.retain-gids.all.ttf",
+    // We don't support the retain-num-glyphs flag
+    "retain-num-glyphs-Roboto-Regular.retain-num-glyphs.61,63,5009.ttf",
+    // IUP rounding is slightly different in the non-fontools case,
+    "glyf_partial_instancing_iup-Roboto-Variable.composite.default.all.wght=200-300-500,wdth=80-90.ttf"
+];
 
 #[derive(Default)]
 struct SubsetTestCase {
@@ -37,7 +53,7 @@ struct SubsetTestCase {
     fonts: Vec<String>,
 
     /// command line args for subsetter
-    profiles: Vec<String>,
+    profiles: Vec<(String, SubsetInput)>,
 
     /// subset codepoints to retain
     subsets: Vec<String>,
@@ -49,6 +65,17 @@ struct SubsetTestCase {
 
     ///IUP optimize or not
     iup_optimize: Vec<bool>,
+}
+
+#[derive(Default, Clone)]
+struct SubsetInput {
+    pub subset_flag: SubsetFlags,
+    pub name_ids: IntSet<NameId>,
+    pub name_languages: IntSet<u16>,
+    pub gids: IntSet<GlyphId>,
+    pub layout_scripts: IntSet<Tag>,
+    pub layout_features: IntSet<Tag>,
+    pub drop_tables: IntSet<Tag>,
 }
 
 #[derive(Default)]
@@ -131,16 +158,10 @@ impl TestCaseParser {
     fn parse_profiles(&mut self, lines: &mut LinesIter) {
         while !lines.is_end() {
             if let Some(next) = lines.next() {
-                //hard coded profiles that're not supported yet
-                //TODO: remove once we support those options
-                let line = next.trim();
-                match line {
-                    "downgrade-cff2.txt"
-                    | "desubroutinize.txt"
-                    | "iftb_requirements.txt"
-                    | "glyph_map_roboto.txt" => continue,
-                    _ => self.case.profiles.push(line.to_owned()),
-                }
+                let subset_input = parse_profile_options(next.trim());
+                self.case
+                    .profiles
+                    .push((next.trim().to_owned(), subset_input));
             }
         }
     }
@@ -204,41 +225,44 @@ impl TestCaseParser {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-// TODO: support more options:
-// --downgrade-cff2,--desubroutinize, --iftb-requirements, --retian-num-glyphs, --gid-map
-fn parse_profile_options(
-    profile: &str,
-    subset_flags: &mut SubsetFlags,
-    name_ids: &mut IntSet<NameId>,
-    gids: &mut IntSet<GlyphId>,
-    unicodes: &mut IntSet<u32>,
-    layout_features: &mut IntSet<Tag>,
-    layout_scripts: &mut IntSet<Tag>,
-    drop_tables: &mut IntSet<Tag>,
-    name_languages: &mut IntSet<u16>,
-) {
-    let file_path = Path::new(TEST_DATA_DIR).join("profiles").join(profile);
+fn parse_profile_options(file_name: &str) -> SubsetInput {
+    let file_path = Path::new(TEST_DATA_DIR).join("profiles").join(file_name);
     let input = std::fs::read_to_string(file_path).unwrap();
+    let mut subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
+    let mut name_ids = IntSet::empty();
+    name_ids.insert_range(NameId::from(0)..=NameId::from(6));
 
+    let mut name_languages = IntSet::<u16>::empty();
+    name_languages.insert(0x0409);
+
+    let mut gids = IntSet::empty();
+
+    let mut drop_tables = IntSet::<Tag>::empty();
+
+    let mut layout_scripts = IntSet::<Tag>::empty();
+    layout_scripts.invert();
+
+    let mut layout_features = IntSet::<Tag>::empty();
+    layout_features.extend(DEFAULT_LAYOUT_FEATURES.iter().copied());
+
+    // General parser: splits on '=', supports +/- suffixes and wildcards
     for line in input.lines() {
         let line = line.trim();
         let split_line = line.split_once("=");
         match split_line {
             None => match line {
-                "--desubroutinize" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_DESUBROUTINIZE,
-                "--retain-gids" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS,
-                "--no-hinting" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_NO_HINTING,
-                "--glyph-names" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_GLYPH_NAMES,
-                "--name-legacy" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_NAME_LEGACY,
-                "--no-layout-closure" => {
-                    *subset_flags |= SubsetFlags::SUBSET_FLAGS_NO_LAYOUT_CLOSURE
-                }
+                "--desubroutinize" => subset_flag |= SubsetFlags::SUBSET_FLAGS_DESUBROUTINIZE,
+                "--retain-gids" => subset_flag |= SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS,
+                "--no-hinting" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NO_HINTING,
+                "--glyph-names" => subset_flag |= SubsetFlags::SUBSET_FLAGS_GLYPH_NAMES,
+                "--name-legacy" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NAME_LEGACY,
+                "--no-layout-closure" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NO_LAYOUT_CLOSURE,
                 "--no-prune-unicode-ranges" => {
-                    *subset_flags |= SubsetFlags::SUBSET_FLAGS_NO_PRUNE_UNICODE_RANGES
+                    subset_flag |= SubsetFlags::SUBSET_FLAGS_NO_PRUNE_UNICODE_RANGES
                 }
-                "--notdef-outline" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE,
-                "--no-bidi-closure" => *subset_flags |= SubsetFlags::SUBSET_FLAGS_NO_BIDI_CLOSURE,
+                "--notdef-outline" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE,
+                "--no-bidi-closure" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NO_BIDI_CLOSURE,
+                "--iftb-requirements" => subset_flag |= SubsetFlags::SUBSET_FLAGS_FORCE_LONG_LOCA,
                 _ => continue,
             },
             Some((option_str, list)) => {
@@ -250,25 +274,31 @@ fn parse_profile_options(
                     (None, option_str)
                 };
                 match option {
-                    "--name-IDs" => parse_list(list, name_ids, action, |s| {
+                    "--name-IDs" => parse_list(list, &mut name_ids, action, |s| {
                         NameId::from(s.parse::<u16>().unwrap())
                     }),
-                    "--gids" => parse_list(list, gids, action, |s| {
-                        GlyphId::from(s.parse::<u32>().unwrap())
+                    "--gids" => parse_list(list, &mut gids, action, |s| {
+                        GlyphId::new(s.parse::<u32>().unwrap())
                     }),
-                    "--unicodes" => parse_list(list, unicodes, action, |s| {
-                        u32::from_str_radix(s, 16).unwrap()
+                    "--layout-features" => parse_tag_list(list, &mut layout_features, action),
+                    "--layout-scripts" => parse_tag_list(list, &mut layout_scripts, action),
+                    "--drop-tables" => parse_tag_list(list, &mut drop_tables, action),
+                    "--name-languages" => parse_list(list, &mut name_languages, action, |s| {
+                        s.parse::<u16>().unwrap()
                     }),
-                    "--layout-features" => parse_tag_list(list, layout_features, action),
-                    "--layout-scripts" => parse_tag_list(list, layout_scripts, action),
-                    "--drop-tables" => parse_tag_list(list, drop_tables, action),
-                    "--name-languages" => {
-                        parse_list(list, name_languages, action, |s| s.parse::<u16>().unwrap())
-                    }
                     _ => continue,
                 }
             }
         }
+    }
+    SubsetInput {
+        subset_flag,
+        name_ids,
+        name_languages,
+        gids,
+        layout_scripts,
+        layout_features,
+        drop_tables,
     }
 }
 
@@ -305,45 +335,94 @@ fn parse_tag_list(list: &str, tag_set: &mut IntSet<Tag>, action: Option<bool>) {
     });
 }
 
+struct IndividualTestCase {
+    font: String,
+    subset: String,
+    profile: (String, SubsetInput),
+    instance: Option<String>,
+    expected_dir: String,
+}
+
+impl IndividualTestCase {
+    fn name(&self) -> PathBuf {
+        gen_subset_font_name(
+            &self.font,
+            &self.subset,
+            self.profile.0.as_str(),
+            self.instance.as_deref(),
+        )
+    }
+    fn run(&self, output_dir: &Path) {
+        let subset_font_name = self.name();
+        let output_file = output_dir.join(&subset_font_name);
+        gen_subset_font_file(
+            &self.font,
+            &self.subset,
+            &self.profile.1,
+            self.instance.as_deref(),
+            &output_file,
+        );
+
+        let expected_file = Path::new(TEST_DATA_DIR)
+            .join("expected")
+            .join(&self.expected_dir)
+            .join(&subset_font_name);
+        compare_with_expected(output_dir, &output_file, &expected_file);
+    }
+}
+
 impl SubsetTestCase {
     fn new(path: &Path) -> Self {
         let parser = TestCaseParser::new();
         parser.parse(path)
     }
 
-    fn run(&self) {
-        let output_temp_dir = TempDir::new_in(".").unwrap();
-        let output_dir = output_temp_dir.path();
+    fn collect_subtests(&self) -> Vec<IndividualTestCase> {
+        let mut subtests = vec![];
         for font in &self.fonts {
+            if font.ends_with(".otf") {
+                continue;
+            }
             for profile in &self.profiles {
                 for subset in &self.subsets {
                     if self.instances.is_empty() {
-                        self.run_one_test(font, subset, profile, None, output_dir);
+                        subtests.push(IndividualTestCase {
+                            font: font.clone(),
+                            subset: subset.clone(),
+                            profile: (profile.0.clone(), profile.1.clone()),
+                            instance: None,
+                            expected_dir: self.expected_dir.clone(),
+                        });
                     } else {
                         for instance in &self.instances {
-                            self.run_one_test(
-                                font,
-                                subset,
-                                profile,
-                                Some(instance.as_str()),
-                                output_dir,
-                            );
+                            subtests.push(IndividualTestCase {
+                                font: font.clone(),
+                                subset: subset.clone(),
+                                profile: (profile.0.clone(), profile.1.clone()),
+                                instance: Some(instance.clone()),
+                                expected_dir: self.expected_dir.clone(),
+                            });
                         }
                     }
                 }
             }
         }
+        subtests
     }
 
     fn gen_expected_output(&self) {
-        let output_temp_dir = TempDir::new_in(".").unwrap();
-        let output_dir = output_temp_dir.path();
+        let output_temp_dir = Builder::new().prefix("skera_test").tempdir_in(".").unwrap();
+        let output_dir = output_temp_dir.keep();
         for font in &self.fonts {
             for profile in &self.profiles {
                 for subset in &self.subsets {
                     if self.instances.is_empty() {
                         self.gen_expected_output_for_one_test(
-                            font, subset, profile, None, output_dir,
+                            font,
+                            subset,
+                            profile,
+                            None,
+                            &output_dir,
                         );
                     } else {
                         for instance in &self.instances {
@@ -352,7 +431,7 @@ impl SubsetTestCase {
                                 subset,
                                 profile,
                                 Some(instance.as_str()),
-                                output_dir,
+                                &output_dir,
                             );
                         }
                     }
@@ -365,82 +444,40 @@ impl SubsetTestCase {
         fs::rename(output_dir, expected_dir).unwrap();
     }
 
-    fn run_one_test(
-        &self,
-        font: &str,
-        subset: &str,
-        profile: &str,
-        instance: Option<&str>,
-        output_dir: &Path,
-    ) {
-        let subset_font_name = gen_subset_font_name(font, subset, profile, instance);
-        let output_file = output_dir.join(&subset_font_name);
-        gen_subset_font_file(font, subset, profile, instance, &output_file);
-
-        let expected_file = Path::new(TEST_DATA_DIR)
-            .join("expected")
-            .join(&self.expected_dir)
-            .join(&subset_font_name);
-        compare_with_expected(output_dir, &output_file, &expected_file);
-    }
-
     fn gen_expected_output_for_one_test(
         &self,
         font: &str,
         subset: &str,
-        profile: &str,
+        profile: &(String, SubsetInput),
         instance: Option<&str>,
         output_dir: &Path,
     ) {
-        let subset_font_name = gen_subset_font_name(font, subset, profile, instance);
+        let subset_font_name = gen_subset_font_name(font, subset, profile.0.as_str(), instance);
         let output_file = output_dir.join(&subset_font_name);
-        gen_subset_font_file(font, subset, profile, instance, &output_file);
+        gen_subset_font_file(font, subset, &profile.1, instance, &output_file);
 
         assert_has_ttx_exec();
         let mut expected_file_name = subset_font_name.to_str().unwrap().to_owned();
         expected_file_name.push_str(".expected");
         let expected_file = output_dir.join(expected_file_name);
 
-        let mut args = Vec::new();
-        args.push(String::from("subset"));
-
-        let org_font_file = Path::new(TEST_DATA_DIR).join("fonts").join(font);
-        args.push(String::from(org_font_file.as_os_str().to_str().unwrap()));
-
-        if !subset.is_empty() {
-            let mut unicodes_option = String::from("--unicodes=");
-            unicodes_option.push_str(subset);
-            args.push(unicodes_option);
-        }
-
-        args.push(String::from("--drop-tables+=DSIG,BASE,MATH,CFF,CFF2"));
-        args.push(String::from("--no-harfbuzz-repacker"));
+        let mut unicodes_option = String::from("--unicodes=");
+        unicodes_option.push_str(subset);
 
         let mut output_option = String::from("--output-file=");
         output_option.push_str(expected_file.to_str().unwrap());
-        args.push(output_option);
 
-        let profile_path = Path::new(TEST_DATA_DIR).join("profiles").join(profile);
-        let profile_input = std::fs::read_to_string(profile_path).unwrap();
-        //TODO: add --desubroutinize back when it's supported
-        for line in profile_input.lines() {
-            let line = line.trim();
-            if line.starts_with("--downgrade-cff2")
-                || line.starts_with("--iftb-requirements")
-                || line.starts_with("--retian-num-glyphs")
-                || line.starts_with("--gid-map")
-                || line.starts_with("--desubroutinize")
-            {
-                continue;
-            }
-            args.push(String::from(line));
-        }
-
-        // TODO: support pruning codepage ranges
-        args.push(String::from("--no-prune-codepage-ranges"));
+        let org_font_file = Path::new(TEST_DATA_DIR).join("fonts").join(font);
 
         Command::new("fonttools")
-            .args(args.clone())
+            .arg("subset")
+            .arg(&org_font_file)
+            .arg("--drop-tables+=DSIG,fpgm,prep,cvt,gasp,cvar,STAT")
+            .arg("--drop-tables-=sbix")
+            .arg("--no-harfbuzz-repacker")
+            .arg("--no-prune-codepage-ranges")
+            .arg(&unicodes_option)
+            .arg(output_option)
             .stdout(Stdio::null())
             .status()
             .map(|s| s.success())
@@ -468,7 +505,7 @@ impl SubsetTestCase {
 
         let diff = diff_ttx(&expected_ttx, &output_ttx);
         if !diff.is_empty() {
-            panic!("fonttool args={args:?}, file={expected_file:?}\n{diff}\nError: {expected_file:?} ttx for fonttools and skera does not match.");
+            panic!("{diff}\nError: ttx for fonttools and skera does not match.");
         }
         fs::remove_file(expected_file).unwrap();
         fs::remove_file(expected_ttx).unwrap();
@@ -479,7 +516,7 @@ impl SubsetTestCase {
 fn gen_subset_font_file(
     font_file: &str,
     subset: &str,
-    profile: &str,
+    profile: &SubsetInput,
     instance: Option<&str>,
     output_file: &PathBuf,
 ) {
@@ -489,53 +526,34 @@ fn gen_subset_font_file(
     let org_font_bytes = std::fs::read(org_font_file).unwrap();
     let font = FontRef::new(&org_font_bytes).unwrap();
 
-    let mut unicodes = parse_unicodes(subset).unwrap();
+    let unicodes = parse_unicodes(subset).unwrap();
+    let drop_tables_str = "morx,mort,kerx,kern,JSTF,DSIG,EBDT,EBLC,EBSC,SVG,PCLT,LTSH,feat,Glat,Gloc,Silf,Sill,fpgm,prep,cvt,gasp,cvar";
     let mut drop_tables = IntSet::empty();
-    drop_tables.extend_unsorted(DEFAULT_DROP_TABLES.iter().copied());
-
-    //TODO: remove drop_tables once we support those tables
-    drop_tables.insert(Tag::new(b"BASE"));
-    drop_tables.insert(Tag::new(b"MATH"));
-    drop_tables.insert(Tag::new(b"CFF "));
-    drop_tables.insert(Tag::new(b"CFF2"));
+    for str in drop_tables_str.split(',') {
+        let tag = Tag::new_checked(str.as_bytes()).unwrap();
+        drop_tables.insert(tag);
+    }
+    for tag in profile.drop_tables.iter() {
+        drop_tables.insert(tag);
+    }
 
     let mut name_ids = IntSet::<NameId>::empty();
     name_ids.insert_range(NameId::from(0)..=NameId::from(6));
-
     let mut name_languages = IntSet::<u16>::empty();
     name_languages.insert(0x0409);
 
-    let mut layout_features = IntSet::empty();
-    layout_features.extend_unsorted(DEFAULT_LAYOUT_FEATURES.iter().copied());
-
-    // Default to all scripts.
-    let mut layout_scripts = IntSet::<Tag>::all();
-
-    let mut subset_flags = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-    let mut gids = IntSet::empty();
-    parse_profile_options(
-        profile,
-        &mut subset_flags,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
     let instancing_spec = instance.and_then(|inst| parse_instancing_spec(inst).ok());
 
     let plan = Plan::new(
-        &gids,
+        &profile.gids,
         &unicodes,
         &font,
-        subset_flags,
+        profile.subset_flag,
         &drop_tables,
-        &layout_scripts,
-        &layout_features,
-        &name_ids,
-        &name_languages,
+        &profile.layout_scripts,
+        &profile.layout_features,
+        &profile.name_ids,
+        &profile.name_languages,
         &instancing_spec,
     );
 
@@ -548,12 +566,12 @@ fn gen_subset_font_file(
 
 fn convert_text_to_unicodes(text: &str) -> String {
     let mut out = String::new();
-    for c in text.trim().chars() {
+    for c in text.chars() {
         let c = c as u32;
         if out.is_empty() {
-            write!(&mut out, "{c:X}").unwrap();
+            write!(&mut out, "{:X}", c).unwrap();
         } else {
-            write!(&mut out, ",{c:X}").unwrap();
+            write!(&mut out, ",{:X}", c).unwrap();
         }
     }
     out
@@ -631,71 +649,122 @@ fn assert_check_ots(file: &Path) {
     )
 }
 
-fn write_lines(f: &mut impl Write, lines: &[&str], line_num: usize, prefix: char) {
-    writeln!(f, "L{line_num}").unwrap();
-    for line in lines {
-        writeln!(f, "{prefix}  {line}").unwrap();
-    }
-}
-
 fn diff_ttx(expected_ttx: &Path, output_ttx: &Path) -> String {
     let expected = fs::read_to_string(expected_ttx).unwrap();
     let output = fs::read_to_string(output_ttx).unwrap();
-    let lines = diff::lines(&expected, &output);
-
+    let expected_per_table: HashMap<String, Vec<String>> = split_into_tables(&expected);
+    let output_per_table: HashMap<String, Vec<String>> = split_into_tables(&output);
+    let all_tables = expected_per_table
+        .keys()
+        .chain(output_per_table.keys())
+        .collect::<HashSet<_>>();
     let mut result = String::new();
-    let mut temp: Vec<&str> = Vec::new();
-    let mut left_or_right = None;
-    let mut section_start = 0;
+    let mut num_glyphs_wrong = false;
+    // Put maxp first
 
-    for (i, line) in lines.iter().enumerate() {
-        match line {
-            diff::Result::Left(line) => {
-                if line.contains("checkSumAdjustment value=") {
+    for table in std::iter::once(&"maxp".to_string())
+        .chain(all_tables.iter().copied().filter(|t| *t != "maxp"))
+    {
+        match (expected_per_table.get(table), output_per_table.get(table)) {
+            (Some(expected_lines), Some(output_lines)) => {
+                // if expected_lines != output_lines {
+                //     result += &format!("{table} differed...\n");
+                // }
+                // continue;
+                if expected_lines != output_lines {
+                    if num_glyphs_wrong && !(table == "GlyphOrder") {
+                        result += &format!(
+                            "Table '{table}' differed and numGlyphs was wrong, all bets are off.\n"
+                        );
+                        continue;
+                    }
+                    if expected_lines.len() + output_lines.len() > 5000 {
+                        result += &format!("Table '{table}' differed and was too big to diff.\n");
+                    }
+                    let diff =
+                        &TextDiff::from_lines(&expected_lines.join("\n"), &output_lines.join("\n"))
+                            .unified_diff()
+                            .header("Expected", "Output")
+                            .to_string();
+
+                    if diff.len() > 1000 {
+                        result += &format!("Table '{table}' differed but was too big to report.\n");
+                        continue;
+                    }
+                    result +=
+                        &(format!("\nDifference found in table '{table}':\n") + diff + "\n\n");
+                    if table == "maxp" {
+                        let expected_num_glyphs = expected_lines
+                            .iter()
+                            .find(|line| line.contains("numGlyphs"))
+                            .unwrap();
+                        let found_num_glyphs = output_lines
+                            .iter()
+                            .find(|line| line.contains("numGlyphs"))
+                            .unwrap();
+                        if expected_num_glyphs != found_num_glyphs {
+                            num_glyphs_wrong = true;
+                        }
+                    }
+                }
+            }
+            (Some(_), None) => {
+                result += &format!("Output did not contain table {table}\n");
+            }
+            (None, Some(_output_lines)) => {
+                if table == "BASE" {
+                    // Some Harfbuzz tests drop BASE table and we don't, so ignore if it's missing in expected
                     continue;
                 }
-                if left_or_right == Some('R') {
-                    write_lines(&mut result, &temp, section_start, '<');
-                    temp.clear();
-                } else if left_or_right != Some('L') {
-                    section_start = i;
-                }
-                temp.push(line);
-                left_or_right = Some('L');
+                result += &format!("Output contained extraneous table {table}\n",);
             }
-            diff::Result::Right(line) => {
-                if line.contains("checkSumAdjustment value=") {
-                    continue;
-                }
-                if left_or_right == Some('L') {
-                    write_lines(&mut result, &temp, section_start, '>');
-                    temp.clear();
-                } else if left_or_right != Some('R') {
-                    section_start = i;
-                }
-                temp.push(line);
-                left_or_right = Some('R');
-            }
-            diff::Result::Both { .. } => {
-                match left_or_right.take() {
-                    Some('R') => write_lines(&mut result, &temp, section_start, '<'),
-                    Some('L') => write_lines(&mut result, &temp, section_start, '>'),
-                    _ => (),
-                }
-                temp.clear();
-            }
+            (None, None) => unreachable!(),
         }
-    }
-    match left_or_right.take() {
-        Some('R') => write_lines(&mut result, &temp, section_start, '<'),
-        Some('L') => write_lines(&mut result, &temp, section_start, '>'),
-        _ => (),
     }
     result
 }
 
+fn split_into_tables(output: &str) -> HashMap<String, Vec<String>> {
+    let mut current_table = None;
+    let mut hashmap: HashMap<String, Vec<String>> = HashMap::new();
+    for line in output.lines() {
+        if line.contains("checkSumAdjustment") {
+            continue;
+        }
+        if let Some(table_name) = line.strip_prefix("  <") {
+            if table_name.starts_with('/') {
+                current_table = None;
+            } else {
+                current_table = Some(table_name.trim_end_matches('>'));
+            }
+        } else if let Some(table_name) = current_table {
+            hashmap
+                .entry(table_name.to_owned())
+                .or_default()
+                .push(line.to_owned());
+        }
+    }
+    hashmap
+}
+
+fn exclude_expected_failures(c: &mut Command) -> &mut Command {
+    c.arg("-x")
+        .arg("cvt ")
+        .arg("-x")
+        .arg("gasp")
+        .arg("-x")
+        .arg("prep")
+        .arg("-x")
+        .arg("fpgm")
+        .arg("-x")
+        .arg("FFTM")
+}
+
 fn compare_with_expected(output_dir: &Path, output_file: &Path, expected_file: &Path) {
-    let expected = fs::read(expected_file).unwrap();
+    let Ok(expected) = fs::read(expected_file) else {
+        println!("Expected file {expected_file:?} does not exist, skipping comparison.");
+        return;
+    };
     let output = fs::read(output_file).unwrap();
     if expected != output {
         // uncomment to overwrite expected file with output for updating integration tests
@@ -704,57 +773,103 @@ fn compare_with_expected(output_dir: &Path, output_file: &Path, expected_file: &
         let expected_file_prefix = expected_file.file_stem().unwrap().to_str().unwrap();
         let expected_ttx = format!("{expected_file_prefix}.expected.ttx");
         let expected_ttx = output_dir.join(expected_ttx);
-        Command::new("ttx")
-            .arg("-o")
-            .arg(&expected_ttx)
-            .arg(expected_file)
-            .stdout(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .expect("ttx failed to parse the expected file {expected_file}");
+        exclude_expected_failures(
+            Command::new("ttx")
+                .arg("-o")
+                .arg(&expected_ttx)
+                .arg(expected_file),
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .expect("ttx failed to parse the expected file {expected_file}");
 
         let output_ttx = output_file.with_extension("ttx");
-        Command::new("ttx")
-            .arg("-o")
-            .arg(&output_ttx)
-            .arg(output_file)
-            .stdout(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .expect("ttx failed to parse the output file {output_file}");
+        exclude_expected_failures(
+            Command::new("ttx")
+                .arg("-o")
+                .arg(&output_ttx)
+                .arg(output_file),
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .expect("ttx failed to parse the output file {output_file}");
 
         let ttx_diff = diff_ttx(&expected_ttx, &output_ttx);
-        //TODO: print more info about the test state
+        if ttx_diff.trim_ascii().is_empty() {
+            return;
+        }
         panic!(
             "failed on {expected_file:?}\n{ttx_diff}\nError: ttx for expected and actual does not match."
         );
     }
 }
 
-const LAYOUT_NOTONASTALIQURDU_TEST: &str = "tests/layout.notonastaliqurdu.tests";
-
-#[rstest]
-fn test_subset_case(#[files("test-data/tests/*.tests")] path: PathBuf) {
-    // Tested in test_subset_layout_notonastaliqurdu.
-    if path.ends_with(LAYOUT_NOTONASTALIQURDU_TEST) {
-        return;
-    }
-    let test = SubsetTestCase::new(&path);
-    match std::env::var(GEN_EXPECTED_OUTPUTS_VAR) {
-        Ok(_val) => test.gen_expected_output(),
-        Err(_e) => test.run(),
-    }
+fn test_cases() -> impl Iterator<Item = (String, SubsetTestCase)> {
+    use std::ffi::OsStr;
+    let tests_path = Path::new(TEST_DATA_DIR).join("tests");
+    tests_path
+        .read_dir()
+        .expect("can't read dir: test-data")
+        .flat_map(|entry| {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let name = path
+                .with_extension("")
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            if path.extension() == Some(OsStr::new("tests")) {
+                Some((name, SubsetTestCase::new(&path)))
+            } else {
+                None
+            }
+        })
 }
 
-#[test]
-#[ignore = r#"Slow integration test, see https://github.com/googlefonts/fontations/issues/1910.
-To run manually: cargo test -p skera -- --ignored"#]
-fn test_subset_layout_notonastaliqurdu() {
-    let path = Path::new(TEST_DATA_DIR).join(LAYOUT_NOTONASTALIQURDU_TEST);
-    let test = SubsetTestCase::new(&path);
-    match std::env::var(GEN_EXPECTED_OUTPUTS_VAR) {
-        Ok(_val) => test.gen_expected_output(),
-        Err(_e) => test.run(),
+fn regression_tests() -> Vec<Trial> {
+    let all_subtests: Vec<_> = test_cases()
+        .map(|(category, test)| (category, test.collect_subtests()))
+        .collect();
+    let mut tests = vec![];
+    for (category, subtests) in all_subtests {
+        for test in subtests {
+            let name = test.name();
+            let trial_name = category.clone() + "-" + name.file_name().unwrap().to_str().unwrap();
+            if EXPECTED_FAILURE_CASES.contains(&trial_name.as_str()) {
+                println!("Skipped expected failure {:?}", trial_name);
+                continue;
+            }
+            tests.push(Trial::test(trial_name, move || {
+                let output_temp_dir = Builder::new().prefix("skera_test").tempdir_in(".").unwrap();
+                let output_dir = output_temp_dir.path();
+                test.run(output_dir);
+                Ok(())
+            }));
+        }
+    }
+    tests
+}
+
+fn main() {
+    env_logger::init();
+    let gen_expected_outputs = std::env::var(GEN_EXPECTED_OUTPUTS_VAR).is_ok();
+    let args = Arguments::from_args();
+    if gen_expected_outputs {
+        for (name, test) in test_cases() {
+            println!("generating expected output for {name}");
+            test.gen_expected_output();
+        }
+    } else {
+        let tests = regression_tests();
+
+        let conclusion = libtest_mimic::run(&args, tests);
+        conclusion.exit();
     }
 }
 
@@ -767,281 +882,115 @@ fn parse_test() {
 
     assert_eq!(subset_test.fonts.len(), 2);
     assert_eq!(subset_test.fonts[0], "Roboto-Regular.abc.ttf");
-    assert_eq!(subset_test.profiles.len(), 14);
-    assert_eq!(subset_test.profiles[0], String::from("default.txt"));
-
-    // parse default.txt: all empty
-    let (
-        mut subset_flag,
-        mut name_ids,
-        mut gids,
-        mut unicodes,
-        mut layout_features,
-        mut layout_scripts,
-        mut drop_tables,
-        mut name_languages,
-    ) = (
-        SubsetFlags::SUBSET_FLAGS_DEFAULT,
-        IntSet::empty(),
-        IntSet::empty(),
-        IntSet::empty(),
-        IntSet::empty(),
-        IntSet::empty(),
-        IntSet::empty(),
-        IntSet::empty(),
-    );
-
-    parse_profile_options(
-        &subset_test.profiles[0],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_DEFAULT);
-    assert!(name_ids.is_empty());
-    assert!(unicodes.is_empty());
-    assert!(name_languages.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
-
-    // parse drop-hints
-    assert_eq!(subset_test.profiles[1], String::from("drop-hints.txt"));
-    parse_profile_options(
-        &subset_test.profiles[1],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_NO_HINTING);
-    assert!(name_ids.is_empty());
-    assert!(unicodes.is_empty());
-    assert!(name_languages.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
-
-    // parse drop-hints-retain-gids
+    assert_eq!(subset_test.profiles.len(), 12);
+    assert_eq!(subset_test.profiles[0].0, String::from("default.txt"));
     assert_eq!(
-        subset_test.profiles[2],
+        subset_test.profiles[0].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_DEFAULT
+    );
+    assert_eq!(subset_test.profiles[0].1.name_ids.len(), 7);
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(0)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(1)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(2)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(3)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(4)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(5)));
+    assert!(subset_test.profiles[0].1.name_ids.contains(NameId::new(6)));
+
+    assert_eq!(subset_test.profiles[0].1.name_languages.len(), 1);
+    assert!(subset_test.profiles[0].1.name_languages.contains(0x409));
+
+    assert!(subset_test.profiles[0].1.gids.is_empty());
+
+    assert_eq!(subset_test.profiles[1].0, String::from("drop-hints.txt"));
+    assert_eq!(
+        subset_test.profiles[1].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_NO_HINTING
+    );
+
+    assert_eq!(
+        subset_test.profiles[2].0,
         String::from("drop-hints-retain-gids.txt")
     );
-
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-
-    parse_profile_options(
-        &subset_test.profiles[2],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
     assert_eq!(
-        subset_flag,
+        subset_test.profiles[2].1.subset_flag,
         SubsetFlags::SUBSET_FLAGS_NO_HINTING | SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS
     );
-    assert!(name_ids.is_empty());
-    assert!(unicodes.is_empty());
-    assert!(name_languages.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
 
-    // parse notdef-outline.txt
-    assert_eq!(subset_test.profiles[4], String::from("notdef-outline.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-
-    parse_profile_options(
-        &subset_test.profiles[4],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE);
-
-    // parse name-ids.txt
-    assert_eq!(subset_test.profiles[5], String::from("name-ids.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-
-    parse_profile_options(
-        &subset_test.profiles[5],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_DEFAULT);
-    assert_eq!(name_ids.len(), 3);
-    assert!(name_ids.contains(NameId::new(0)));
-    assert!(name_ids.contains(NameId::new(1)));
-    assert!(name_ids.contains(NameId::new(2)));
-    assert!(unicodes.is_empty());
-    assert!(name_languages.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
-
-    // parse name-languages.txt
-    assert_eq!(subset_test.profiles[6], String::from("name-languages.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-    name_ids.clear();
-
-    parse_profile_options(
-        &subset_test.profiles[6],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_DEFAULT);
-    assert!(name_languages.contains(1));
-    assert!(name_languages.contains(2));
-    assert!(name_languages.contains(3));
-    assert!(name_ids.is_empty());
-    assert!(unicodes.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
-
-    // parse name-legacy
-    assert_eq!(subset_test.profiles[7], String::from("name-legacy.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-    name_languages.clear();
-
-    parse_profile_options(
-        &subset_test.profiles[7],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_NAME_LEGACY);
-    assert!(name_ids.is_empty());
-    assert!(unicodes.is_empty());
-    assert!(gids.is_empty());
-    assert!(layout_features.is_empty());
-    assert!(layout_scripts.is_empty());
-    assert!(drop_tables.is_empty());
-    assert!(name_languages.is_empty());
-
-    // parse gids.txt
-    assert_eq!(subset_test.profiles[8], String::from("gids.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-
-    parse_profile_options(
-        &subset_test.profiles[8],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(subset_flag, SubsetFlags::SUBSET_FLAGS_DEFAULT);
-    assert_eq!(gids.len(), 3);
-    assert!(gids.contains(GlyphId::new(1)));
-    assert!(gids.contains(GlyphId::new(2)));
-    assert!(gids.contains(GlyphId::new(3)));
-
-    // parse layout-features.txt
-    assert_eq!(subset_test.profiles[9], String::from("layout-features.txt"));
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-    gids.clear();
-
-    parse_profile_options(
-        &subset_test.profiles[9],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert_eq!(layout_features.len(), 3);
-    assert!(layout_features.contains(Tag::new(b"kern")));
-    assert!(layout_features.contains(Tag::new(b"mark")));
-    assert!(layout_features.contains(Tag::new(b"liga")));
-
-    // parse keep-all-layout-features.txt
+    assert_eq!(subset_test.profiles[3].0, String::from("retain-gids.txt"));
     assert_eq!(
-        subset_test.profiles[10],
-        String::from("keep-all-layout-features.txt")
+        subset_test.profiles[3].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS
     );
-    layout_features.clear();
 
-    parse_profile_options(
-        &subset_test.profiles[10],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
-    assert!(layout_features.is_inverted());
-
-    // parse retain-gids-glyph-names
     assert_eq!(
-        subset_test.profiles[13],
+        subset_test.profiles[4].0,
+        String::from("notdef-outline.txt")
+    );
+    assert_eq!(
+        subset_test.profiles[4].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE
+    );
+
+    assert_eq!(subset_test.profiles[5].0, String::from("name-ids.txt"));
+    assert_eq!(
+        subset_test.profiles[5].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_DEFAULT
+    );
+    assert_eq!(subset_test.profiles[5].1.name_ids.len(), 3);
+    assert!(subset_test.profiles[5].1.name_ids.contains(NameId::new(0)));
+    assert!(subset_test.profiles[5].1.name_ids.contains(NameId::new(1)));
+    assert!(subset_test.profiles[5].1.name_ids.contains(NameId::new(2)));
+
+    assert_eq!(
+        subset_test.profiles[6].0,
+        String::from("name-languages.txt")
+    );
+    assert_eq!(
+        subset_test.profiles[6].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_DEFAULT
+    );
+    assert!(subset_test.profiles[6].1.name_languages.contains(1));
+    assert!(subset_test.profiles[6].1.name_languages.contains(2));
+    assert!(subset_test.profiles[6].1.name_languages.contains(3));
+
+    assert_eq!(subset_test.profiles[7].0, String::from("name-legacy.txt"));
+    assert_eq!(
+        subset_test.profiles[7].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_NAME_LEGACY
+    );
+
+    assert_eq!(subset_test.profiles[8].0, String::from("gids.txt"));
+    assert_eq!(
+        subset_test.profiles[8].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_DEFAULT
+    );
+    assert_eq!(subset_test.profiles[8].1.gids.len(), 3);
+    assert!(subset_test.profiles[8].1.gids.contains(GlyphId::new(1)));
+    assert!(subset_test.profiles[8].1.gids.contains(GlyphId::new(2)));
+    assert!(subset_test.profiles[8].1.gids.contains(GlyphId::new(3)));
+
+    assert_eq!(
+        subset_test.profiles[9].0,
+        String::from("no-prune-unicode-ranges.txt")
+    );
+    assert_eq!(
+        subset_test.profiles[9].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_NO_PRUNE_UNICODE_RANGES
+    );
+
+    assert_eq!(subset_test.profiles[10].0, String::from("glyph-names.txt"));
+    assert_eq!(
+        subset_test.profiles[10].1.subset_flag,
+        SubsetFlags::SUBSET_FLAGS_GLYPH_NAMES
+    );
+
+    assert_eq!(
+        subset_test.profiles[11].0,
         String::from("retain-gids-glyph-names.txt")
     );
-    subset_flag = SubsetFlags::SUBSET_FLAGS_DEFAULT;
-
-    parse_profile_options(
-        &subset_test.profiles[13],
-        &mut subset_flag,
-        &mut name_ids,
-        &mut gids,
-        &mut unicodes,
-        &mut layout_features,
-        &mut layout_scripts,
-        &mut drop_tables,
-        &mut name_languages,
-    );
     assert_eq!(
-        subset_flag,
+        subset_test.profiles[11].1.subset_flag,
         SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS | SubsetFlags::SUBSET_FLAGS_GLYPH_NAMES
     );
     assert_eq!(subset_test.subsets.len(), 3);

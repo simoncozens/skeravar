@@ -27,6 +27,7 @@ cli = ["clap"]
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"], optional = true }
+env_logger.workspace = true
 font-types.workspace = true
 hashbrown = { version = "0.17.0", default-features = false, features = [
     "inline-more",
@@ -43,6 +44,12 @@ write-fonts = { workspace = true, features = ["read", "tables"] }
 criterion = { workspace = true }
 diff = "0.1.13"
 font-test-data = { workspace = true }
+libtest-mimic = "0.8.1"
 rayon = { workspace = true }
 rstest = "0.26.1"
+similar = "2.7.0"
 tempfile = "3"
+
+[[test]]
+name = "integration_test"
+harness = false
