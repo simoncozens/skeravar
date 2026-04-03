@@ -28,6 +28,8 @@ cli = ["clap"]
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"], optional = true }
 hashbrown = { version = "0.17.0", default-features = false, features = ["inline-more"] }
+log = "0.4.29"
+regex = "1.10.4"
 skrifa = { workspace = true }
 thiserror = "2.0"
 write-fonts = { workspace = true, features = ["read"] }
