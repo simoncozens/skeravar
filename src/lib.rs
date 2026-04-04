@@ -518,7 +518,8 @@ impl Plan {
 
         let _ = this.normalize_axes_location(font); // Proper error handling later
         this.populate_unicodes_to_retain(input_gids, input_unicodes, font);
-        this.populate_gids_to_retain(font);
+        this.populate_gids_to_retain(font)
+            .expect("Could not populate gids to retain");
         this.create_old_gid_to_new_gid_map();
 
         this.create_glyph_map_gsub();
@@ -804,7 +805,7 @@ impl Plan {
         }
     }
 
-    fn populate_gids_to_retain(&mut self, font: &FontRef) {
+    fn populate_gids_to_retain(&mut self, font: &FontRef) -> Result<(), SubsetError> {
         //not-def
         self.glyphset_gsub.insert(GlyphId::NOTDEF);
 
@@ -814,8 +815,7 @@ impl Plan {
         }
 
         // layout closure
-        self.layout_populate_gids_to_retain(font);
-        remove_invalid_gids(&mut self.glyphset_gsub, self.font_num_glyphs);
+        self.layout_populate_gids_to_retain(font)?;
 
         //skip glyph closure for MATH table, it's not supported yet
 
@@ -849,20 +849,22 @@ impl Plan {
 
         self.nameid_closure(font);
         self.collect_layout_var_indices(font);
+        Ok(())
     }
 
-    fn layout_populate_gids_to_retain(&mut self, font: &FontRef) {
+    fn layout_populate_gids_to_retain(&mut self, font: &FontRef) -> Result<(), SubsetError> {
         if !self.drop_tables.contains(Tag::new(b"GSUB")) {
             if let Ok(gsub) = font.gsub() {
-                gsub.closure_glyphs_lookups_features(self);
+                gsub.closure_glyphs_lookups_features(self)?;
             }
         }
 
         if !self.drop_tables.contains(Tag::new(b"GPOS")) {
             if let Ok(gpos) = font.gpos() {
-                gpos.closure_glyphs_lookups_features(self);
+                gpos.closure_glyphs_lookups_features(self)?;
             }
         }
+        Ok(())
     }
 
     fn create_old_gid_to_new_gid_map(&mut self) {
