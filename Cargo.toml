@@ -34,7 +34,7 @@ num-traits = "0.2.18"
 regex = "1.10.4"
 skrifa = { workspace = true }
 thiserror = "2.0"
-write-fonts = { workspace = true, features = ["read"] }
+write-fonts = { workspace = true, features = ["read", "tables"] }
 
 
 [dev-dependencies]
