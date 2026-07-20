@@ -5,6 +5,7 @@ mod cblc;
 mod cmap;
 mod colr;
 mod cpal;
+mod deltas;
 mod fnv;
 mod fvar;
 mod gdef;
@@ -50,6 +51,10 @@ pub use parsing_util::{
 };
 use unicode_closure::unicode_closure;
 
+use crate::deltas::{
+    composite_glyph as composite_glyph_deltas, simple_glyph as simple_glyph_deltas,
+    SimpleGlyph as SimpleGlyphForDeltas,
+};
 use fnv::FnvHashMap;
 use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::MetadataProvider;
