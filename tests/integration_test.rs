@@ -8,7 +8,7 @@
 
 use libtest_mimic::{Arguments, Trial};
 use similar::TextDiff;
-use skera::{parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
+use skeravar::{parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
 use skrifa::GlyphId;
 use std::{
     collections::{HashMap, HashSet},
@@ -520,7 +520,7 @@ fn gen_subset_font_file(
     instance: Option<&str>,
     output_file: &PathBuf,
 ) {
-    use skera::parse_instancing_spec;
+    use skeravar::parse_instancing_spec;
 
     let org_font_file = PathBuf::from(TEST_DATA_DIR).join("fonts").join(font_file);
     let org_font_bytes = std::fs::read(org_font_file).unwrap();

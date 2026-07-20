@@ -5,7 +5,7 @@
 //!
 
 use rstest::rstest;
-use skera::{subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES};
+use skeravar::{subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES};
 use std::path::PathBuf;
 use write_fonts::{
     read::{collections::IntSet, FontRef},
