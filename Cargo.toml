@@ -6,9 +6,10 @@ readme = "README.md"
 categories = ["text-processing"]
 exclude = ["/test-data"]
 
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/simoncozens/skeravar"
+rust-version = "1.89"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -27,25 +28,27 @@ cli = ["clap"]
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"], optional = true }
-env_logger.workspace = true
-font-types.workspace = true
+env_logger = "0.11"
+
 hashbrown = { version = "0.17.0", default-features = false, features = [
     "inline-more",
 ] }
 log = "0.4.29"
 num-traits = "0.2.18"
 regex = "1.10.4"
-skrifa = { workspace = true }
 thiserror = "2.0"
-write-fonts = { workspace = true, features = ["read", "tables"] }
+ # We need git version for composite flag setting. And because of that we need git versions of everything else too...
+ # Everything is horrible, hope for a release soon.
+write-fonts = { git="https://github.com/googlefonts/fontations", version = "0.50.0", features = ["read", "tables"] }
+font-types =  { git="https://github.com/googlefonts/fontations", version = "0.12.1"}
+skrifa =  { git="https://github.com/googlefonts/fontations", version = "0.44.0"}
 
 
 [dev-dependencies]
-criterion = { workspace = true }
+criterion = "0.7.0"
 diff = "0.1.13"
-font-test-data = { workspace = true }
+font-test-data = "0.7.0"
 libtest-mimic = "0.8.1"
-rayon = { workspace = true }
 rstest = "0.26.1"
 similar = "2.7.0"
 tempfile = "3"
