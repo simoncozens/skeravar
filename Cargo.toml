@@ -1,5 +1,5 @@
 [package]
-name = "skera"
+name = "skeravar"
 version = "0.4.0"
 description = "Subsetting a font file according to provided input."
 readme = "README.md"
@@ -18,7 +18,7 @@ name = "skera-benchmarks"
 harness = false
 
 [[bin]]
-name = "skera"
+name = "skeravar"
 path = "src/main.rs"
 required-features = ["cli"]
 

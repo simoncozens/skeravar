@@ -1,6 +1,6 @@
-# skera
+# skeravar
 
-`skera` is a Rust library and binary for subsetting a font file according to provided input.
+`skeravar` is a *temporary* fork of fontations' `skera` subsetter, modified to support OpenType Variations. Once `skera` itself supports variations, this code will immediately refuse to compile.
 
 ## Installation
 
