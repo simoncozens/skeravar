@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use skera::{subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES};
+use skeravar::{subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES};
 use std::path::Path;
 use write_fonts::{
     read::{collections::IntSet, FontRef},
@@ -39,6 +39,7 @@ fn create_plan(font: &FontRef, unicodes: &IntSet<u32>) -> Plan {
         &(0..=6).map(NameId::from).collect(),
         // Keep English (US) locale (0x0409) names
         &[0x0409].into_iter().collect(),
+        &None,
     )
 }
 
