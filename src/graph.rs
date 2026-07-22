@@ -1,8 +1,8 @@
 //! Define a graph struct that represents a serialized table
 //! Implement methods to modify and reorder the graph
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     priority_queue::PriorityQueue,
     serialize::{Link, LinkWidth, ObjIdx, Object, OffsetWhence, SerializeErrorFlags, Serializer},
 };

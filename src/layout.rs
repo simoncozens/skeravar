@@ -5,8 +5,8 @@ use std::{
     mem::{self},
 };
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     offset::SerializeSubset,
     offset_array::SubsetOffsetArray,
     serialize::{OffsetWhence, SerializeErrorFlags, Serializer},

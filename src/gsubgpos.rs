@@ -1,6 +1,6 @@
 //! impl subset() for Sequence Context/Chained Sequence Context tables
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     layout::{intersected_glyphs_and_indices, ClassDefSubsetStruct},
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::{IterNullableHelper, SubsetOffsetArray},

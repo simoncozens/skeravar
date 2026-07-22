@@ -10,9 +10,9 @@ mod pair_pos;
 mod single_pos;
 mod value_record;
 
-use crate::fnv::FnvHashMap;
 use crate::{
     collect_features_with_retained_subs, find_duplicate_features,
+    fnv::FnvHashMap,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, Serializer},
@@ -136,7 +136,6 @@ impl LayoutClosure for Gpos<'_> {
         } else {
             FeatureSubstituteCollectionResult::empty()
         };
-
 
         // Store results in plan AFTER extracting what we need
         let record_cond_idx_map = feature_substitutes.record_cond_idx_map.clone();

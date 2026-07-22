@@ -1,7 +1,7 @@
 //! impl subset() for CursivePos subtable
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     layout::{intersected_coverage_indices, intersected_glyphs_and_indices},
     offset::{SerializeSerialize, SerializeSubset},
     serialize::{SerializeErrorFlags, Serializer},

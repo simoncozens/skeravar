@@ -1,7 +1,7 @@
 //! impl subset() for post
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     serialize::{SerializeErrorFlags, Serializer},
     Plan, Subset, SubsetError, SubsetFlags,
 };

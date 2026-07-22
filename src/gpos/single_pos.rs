@@ -1,7 +1,7 @@
 //! impl subset() for SinglePos subtable
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     gpos::value_record::{collect_variation_indices, compute_effective_format},
     layout::{intersected_coverage_indices, intersected_glyphs_and_indices},
     offset::SerializeSerialize,

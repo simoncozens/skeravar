@@ -1,6 +1,6 @@
 //! impl subset() for MarkRecord subtable
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     offset::SerializeSubset,
     serialize::{SerializeErrorFlags, Serializer},
     CollectVariationIndices, Plan, SubsetTable,

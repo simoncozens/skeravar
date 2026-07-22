@@ -5,9 +5,9 @@ mod multiple_subst;
 mod reverse_chain_single_subst;
 mod single_subst;
 
-use crate::fnv::FnvHashMap;
 use crate::{
     collect_features_with_retained_subs, find_duplicate_features,
+    fnv::FnvHashMap,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, Serializer},
@@ -102,7 +102,6 @@ impl LayoutClosure for Gsub<'_> {
         else {
             return Ok(());
         };
-
 
         // Collect feature substitutes with variations
         let feature_substitutes = if !plan.user_axes_location.is_empty() {

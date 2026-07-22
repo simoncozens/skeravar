@@ -1,7 +1,9 @@
 //! Handling offsets
 
-use crate::serialize::{OffsetWhence, SerializeErrorFlags, Serializer};
-use crate::{Plan, Serialize, SubsetTable};
+use crate::{
+    serialize::{OffsetWhence, SerializeErrorFlags, Serializer},
+    Plan, Serialize, SubsetTable,
+};
 use write_fonts::{
     read::MinByteRange,
     types::{FixedSize, Scalar},

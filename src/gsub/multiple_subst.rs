@@ -1,6 +1,6 @@
 //! impl subset() for MultipleSubst subtable
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     layout::intersected_glyphs_and_indices,
     offset::SerializeSerialize,
     offset_array::SubsetOffsetArray,

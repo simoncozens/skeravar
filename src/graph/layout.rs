@@ -1,6 +1,6 @@
 //! Read layout tables in a graph
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     graph::{Graph, RepackError},
     serialize::{Link, LinkWidth, ObjIdx},
 };

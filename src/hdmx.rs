@@ -1,7 +1,9 @@
 //! impl subset() for hdmx
 
-use crate::serialize::{SerializeErrorFlags, Serializer};
-use crate::{Plan, Subset, SubsetError};
+use crate::{
+    serialize::{SerializeErrorFlags, Serializer},
+    Plan, Subset, SubsetError,
+};
 use write_fonts::{
     read::{
         tables::hdmx::{DeviceRecord, Hdmx},

@@ -1,9 +1,8 @@
 //! impl subset() for MVAR
 
-use crate::fnv::FnvHashMap;
 use crate::{
-    offset::SerializeCopy, serialize::Serializer, variations::subset_itemvarstore_with_instancing,
-    IncBiMap, Plan, Subset, SubsetError,
+    fnv::FnvHashMap, offset::SerializeCopy, serialize::Serializer,
+    variations::subset_itemvarstore_with_instancing, IncBiMap, Plan, Subset, SubsetError,
 };
 use font_types::Offset16;
 use write_fonts::{

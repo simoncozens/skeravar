@@ -1,5 +1,4 @@
-use crate::fnv::FnvHashMap;
-use crate::{variations::solver::Triple, Plan, SubsetError};
+use crate::{fnv::FnvHashMap, variations::solver::Triple, Plan, SubsetError};
 use skrifa::{
     raw::{
         tables::stat::{AxisValue, AxisValueTableFlags, Stat},

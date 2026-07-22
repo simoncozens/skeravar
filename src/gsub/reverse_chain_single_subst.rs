@@ -1,6 +1,6 @@
 //! impl subset() for ReverseChainSingleSubst subtable
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     offset::SerializeSerialize,
     serialize::{SerializeErrorFlags, Serializer},
     Plan, SubsetState, SubsetTable,

@@ -1,7 +1,7 @@
 //! impl subset() for CPAL table
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     offset::{SerializeCopy, SerializeSubset},
     serialize::{SerializeErrorFlags, Serializer},
     NameIdClosure, Plan, Subset, SubsetError, SubsetTable,

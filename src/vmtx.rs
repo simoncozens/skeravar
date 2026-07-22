@@ -1,12 +1,11 @@
 //! impl subset() for vmtx
 
-use crate::serialize::Serializer;
-use crate::{Plan, Subset, SubsetError, SubsetError::SubsetTableError};
+use crate::{serialize::Serializer, Plan, Subset, SubsetError, SubsetError::SubsetTableError};
 use skrifa::raw::tables::mvar::tags::{VCOF, VCRN, VCRS};
-use write_fonts::from_obj::ToOwnedTable;
-use write_fonts::types::{FWord, GlyphId, UfWord};
 use write_fonts::{
+    from_obj::ToOwnedTable,
     read::{tables::vmtx::Vmtx, FontRef, TableProvider, TopLevelTable},
+    types::{FWord, GlyphId, UfWord},
     FontBuilder,
 };
 

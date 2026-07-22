@@ -1,14 +1,16 @@
 //! impl subset() for sbix
-use crate::serialize::{OffsetWhence, SerializeErrorFlags, Serializer};
-use crate::{Plan, Subset, SubsetError, SubsetTable};
+use crate::{
+    serialize::{OffsetWhence, SerializeErrorFlags, Serializer},
+    Plan, Subset, SubsetError, SubsetTable,
+};
 use skrifa::GlyphId;
-use write_fonts::types::FixedSize;
 use write_fonts::{
     read::{
         tables::sbix::{Sbix, Strike},
         types::Offset32,
         ArrayOfOffsets, FontRef, MinByteRange, ReadError, TopLevelTable,
     },
+    types::FixedSize,
     FontBuilder,
 };
 

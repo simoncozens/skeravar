@@ -3,8 +3,8 @@
 
 use std::cmp::Ordering;
 
-use crate::fnv::FnvHashMap;
 use crate::{
+    fnv::FnvHashMap,
     graph::{
         layout::{ExtensionSubtable, Lookup, EXTENSION_TABLE_SIZE},
         ligature_graph::split_ligature_subst,

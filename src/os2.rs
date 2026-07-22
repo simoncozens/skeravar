@@ -1,12 +1,12 @@
 //! impl subset() for OS/2
-use crate::serialize::Serializer;
-use crate::SubsetFlags;
-use crate::{Plan, Subset, SubsetError};
-use skrifa::raw::tables::mvar::tags::{
-    CPHT, HASC, HCLA, HCLD, HDSC, HLGP, SBXO, SBXS, SBYO, SBYS, SPXO, SPXS, SPYO, SPYS, STRO, STRS,
-    XHGT,
+use crate::{serialize::Serializer, Plan, Subset, SubsetError, SubsetFlags};
+use skrifa::{
+    raw::tables::mvar::tags::{
+        CPHT, HASC, HCLA, HCLD, HDSC, HLGP, SBXO, SBXS, SBYO, SBYS, SPXO, SPXS, SPYO, SPYS, STRO,
+        STRS, XHGT,
+    },
+    Tag,
 };
-use skrifa::Tag;
 use std::cmp::Ordering;
 use write_fonts::{
     read::{
