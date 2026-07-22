@@ -979,7 +979,7 @@ impl Graph {
             return Ok(());
         }
 
-        let clone_idx = self.duplicate_vertex(start_idx)?;
+        let clone_idx = self.duplicate_vertex(start_idx, false)?;
         index_map.insert(start_idx, clone_idx);
 
         let start_v = &self.vertices[start_idx];
@@ -996,7 +996,11 @@ impl Graph {
     }
 
     /// Creates a copy of the specified vertex and returns the new vertex idx.
-    fn duplicate_vertex(&mut self, obj_idx: ObjIdx) -> Result<ObjIdx, RepackError> {
+    fn duplicate_vertex(
+        &mut self,
+        obj_idx: ObjIdx,
+        copy_data: bool,
+    ) -> Result<ObjIdx, RepackError> {
         let clone_idx = self.vertices.len();
         if clone_idx >= MAX_VERTICES {
             return Err(RepackError::ErrorMaxOperationsExceeded);
@@ -1009,7 +1013,14 @@ impl Graph {
         let v = self
             .vertex(obj_idx)
             .ok_or(RepackError::GraphErrorInvalidObjIndex)?;
-        let new_v = Vertex::duplicate(v);
+
+        let table_size = v.table_size();
+        let mut new_v = Vertex::duplicate(v);
+        if copy_data && table_size > 0 {
+            new_v.head = self.data.len();
+            self.data.extend_from_within(v.head..v.tail);
+            new_v.tail = self.data.len();
+        }
         let vertices = &mut self.vertices;
 
         for l in new_v.real_links.values() {
@@ -1175,7 +1186,7 @@ impl Graph {
             return Ok(None);
         }
 
-        let clone_idx = self.duplicate_vertex(child_idx)?;
+        let clone_idx = self.duplicate_vertex(child_idx, false)?;
         let mut old_to_new_idx_parents = Vec::new();
         for parent_idx in parents.iter() {
             let parent_idx = parent_idx as usize;
@@ -1208,7 +1219,7 @@ impl Graph {
         child_idx: ObjIdx,
         pos: u32,
     ) -> Result<Option<ObjIdx>, RepackError> {
-        let clone_idx = self.duplicate_vertex(child_idx)?;
+        let clone_idx = self.duplicate_vertex(child_idx, true)?;
         self.mut_vertex(child_idx)
             .ok_or(RepackError::GraphErrorInvalidObjIndex)?
             .remove_parent(parent_idx, false);
