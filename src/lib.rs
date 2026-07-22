@@ -1512,7 +1512,9 @@ fn generate_varstore_inner_maps(
         inner_maps[major as usize].add(minor);
     }
 }
-//
+
+type DeltaSetIdxVarIdxMap = FnvHashMap<u32, u32>;
+
 fn remap_delta_set_indices(
     delta_set_indices: &IntSet<u32>,
     deltaset_idx_var_idx_map: &DeltaSetIdxVarIdxMap,
@@ -2226,7 +2228,7 @@ mod test {
         plan.glyphset_gsub.insert(GlyphId::new(2));
         plan.glyphset_gsub.insert(GlyphId::new(7));
 
-        plan.populate_gids_to_retain(&font);
+        plan.populate_gids_to_retain(&font).unwrap();
         assert_eq!(plan.glyphset_gsub.len(), 3);
         assert!(plan.glyphset_gsub.contains(GlyphId::new(0)));
         assert!(plan.glyphset_gsub.contains(GlyphId::new(2)));

@@ -29,7 +29,7 @@ use write_fonts::{
         types::{GlyphId, GlyphId16, NameId},
         ArrayOfOffsets, FontData, FontRead, FontRef, MinByteRange, ReadError, TopLevelTable,
     },
-    types::{FixedSize, Offset16, Offset32, Tag},
+    types::{FixedSize, Offset16, Tag},
 };
 
 const MAX_SCRIPTS: u16 = 500;
@@ -333,7 +333,7 @@ impl<'a> SubsetTable<'a> for ClassDefFormat2<'a> {
             }
         }
 
-        new_gid_classes.sort_by(|a, b| a.0.cmp(&b.0));
+        new_gid_classes.sort_by_key(|a| a.0);
         let use_class_zero = if args.use_class_zero {
             let glyph_count = if let Some(glyph_filter) = args.glyph_filter {
                 glyph_map
@@ -379,6 +379,7 @@ fn classdef_remap_and_serialize(
     }
 
     let mut new_idx = if use_class_zero { 0_u16 } else { 1 };
+    #[allow(clippy::explicit_counter_loop)] // More confusing not to
     for class in retained_classes.iter() {
         class_map.insert(class, new_idx);
         new_idx += 1;

@@ -210,6 +210,7 @@ impl IndexMapSubsetPlan {
                     break;
                 }
 
+                #[allow(clippy::unnecessary_unwrap)] // Easier logic
                 let v = index_map.unwrap().get(old_gid.to_u32())?;
                 let outer = v.outer as usize;
                 if outer >= this.max_inners.len() {
