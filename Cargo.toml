@@ -39,9 +39,9 @@ regex = "1.10.4"
 thiserror = "2.0"
  # We need git version for composite flag setting. And because of that we need git versions of everything else too...
  # Everything is horrible, hope for a release soon.
-write-fonts = { git="https://github.com/googlefonts/fontations", version = "0.50.0", features = ["read", "tables"] }
-font-types =  { git="https://github.com/googlefonts/fontations", version = "0.12.1"}
-skrifa =  { git="https://github.com/googlefonts/fontations", version = "0.44.0"}
+write-fonts = { version = "0.51.0", features = ["read", "tables"] }
+font-types =  { version = "0.12.1"}
+skrifa =  { version = "0.45.0"}
 
 
 [dev-dependencies]
