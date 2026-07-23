@@ -37,8 +37,6 @@ log = "0.4.29"
 num-traits = "0.2.18"
 regex = "1.10.4"
 thiserror = "2.0"
- # We need git version for composite flag setting. And because of that we need git versions of everything else too...
- # Everything is horrible, hope for a release soon.
 write-fonts = { version = "0.51.0", features = ["read", "tables"] }
 font-types =  { version = "0.12.1"}
 skrifa =  { version = "0.45.0"}
