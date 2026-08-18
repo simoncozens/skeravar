@@ -183,13 +183,19 @@ impl<'a> SubsetTable<'a> for AnchorFormat3<'a> {
             .transpose()
             .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
         {
-            Offset16::serialize_subset(
+            match Offset16::serialize_subset(
                 &x_device,
                 s,
                 plan,
                 &plan.layout_varidx_delta_map.borrow(),
                 x_device_offset_pos,
-            )?;
+            ) {
+                Ok(()) => (),
+                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
+                Err(e) => {
+                    return Err(e);
+                }
+            }
         }
 
         let y_device_offset_pos = s.embed(0_u16)?;
@@ -198,13 +204,19 @@ impl<'a> SubsetTable<'a> for AnchorFormat3<'a> {
             .transpose()
             .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
         {
-            Offset16::serialize_subset(
+            match Offset16::serialize_subset(
                 &y_device,
                 s,
                 plan,
                 &plan.layout_varidx_delta_map.borrow(),
                 y_device_offset_pos,
-            )?;
+            ) {
+                Ok(()) => (),
+                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => (),
+                Err(e) => {
+                    return Err(e);
+                }
+            }
         }
 
         Ok(())
