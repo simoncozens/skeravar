@@ -134,6 +134,9 @@ impl<'a> SubsetTable<'a> for VariationIndex<'a> {
     ) -> Result<(), SerializeErrorFlags> {
         let var_idx =
             ((self.delta_set_outer_index() as u32) << 16) + self.delta_set_inner_index() as u32;
+        if var_idx == NO_VARIATION_INDEX {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+        }
         let new_idx = args
             .get(&var_idx)
             .map(|(new_idx, _)| *new_idx)
