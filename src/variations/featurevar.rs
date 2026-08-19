@@ -25,7 +25,7 @@ use crate::{
     layout::SubsetLayoutContext,
     offset::SerializeSubset,
     offset_array::SubsetOffsetArray,
-    serialize::{SerializeErrorFlags, Serializer},
+    serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     variations::solver::{renormalize_value, Triple},
     Plan, SubsetError, SubsetTable,
 };
@@ -275,10 +275,11 @@ impl<'a> SubsetTable<'a> for ConditionSet<'a> {
             if retained_cond_set.is_some_and(|set| !set.contains(i)) {
                 continue;
             }
-            match conditions.subset_offset(i as usize, s, plan, ()) {
-                Ok(()) => count += 1,
-                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => continue,
-                Err(e) => return Err(e),
+            if !conditions
+                .subset_offset(i as usize, s, plan, ())
+                .is_empty()?
+            {
+                count += 1;
             }
         }
 
@@ -534,10 +535,11 @@ impl<'a> SubsetTable<'a> for FeatureTableSubstitution<'_> {
         let (feature_index_map, c) = args;
         let font_data = self.offset_data();
         for sub in self.substitutions() {
-            match sub.subset(plan, s, (feature_index_map, c, font_data)) {
-                Ok(()) => subs_count += 1,
-                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => continue,
-                Err(e) => return Err(e),
+            if !sub
+                .subset(plan, s, (feature_index_map, c, font_data))
+                .is_empty()?
+            {
+                subs_count += 1;
             }
         }
 

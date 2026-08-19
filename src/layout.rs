@@ -9,7 +9,7 @@ use crate::{
     fnv::FnvHashMap,
     offset::SerializeSubset,
     offset_array::SubsetOffsetArray,
-    serialize::{OffsetWhence, SerializeErrorFlags, Serializer},
+    serialize::{OffsetWhence, SerializeErrorFlags, SerializeResultEmpty, Serializer},
     CollectVariationIndices, NameIdClosure, Plan, Serialize, SubsetState, SubsetTable,
 };
 use write_fonts::{
@@ -1229,10 +1229,13 @@ impl<'a> SubsetTable<'a> for ScriptList<'_> {
             }
 
             let snap = s.snapshot();
-            match script_record.subset(plan, s, (c, font_data, i)) {
-                Ok(()) => num_records += 1,
-                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => s.revert_snapshot(snap),
-                Err(e) => return Err(e),
+            if !script_record
+                .subset(plan, s, (c, font_data, i))
+                .is_empty()?
+            {
+                num_records += 1;
+            } else {
+                s.revert_snapshot(snap);
             }
         }
         if num_records != 0 {

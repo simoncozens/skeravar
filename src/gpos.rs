@@ -15,7 +15,7 @@ use crate::{
     fnv::FnvHashMap,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
-    serialize::{SerializeErrorFlags, Serializer},
+    serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     variations::featurevar::{
         collect_feature_substitutes_with_variations, collect_lookups_with_substitutes,
         feature_variation_collect_lookups, CollectFeatureSubstitutesContext,
@@ -286,20 +286,18 @@ fn subset_gpos(
         let snap = s.snapshot();
         let feature_vars_offset_pos = s.embed(0_u32)?;
         let insert_catch_all = !plan.gpos_old_features.is_empty();
-        match Offset32::serialize_subset(
+        if Offset32::serialize_subset(
             &feature_variations,
             s,
             plan,
             (&mut c, insert_catch_all),
             feature_vars_offset_pos,
-        ) {
-            Ok(()) => (),
+        )
+        .is_empty()?
+        {
             // downgrade table version if there are no FeatureVariations
-            Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => {
-                s.revert_snapshot(snap);
-                s.copy_assign(version_pos, MajorMinor::VERSION_1_0);
-            }
-            Err(e) => return Err(e),
+            s.revert_snapshot(snap);
+            s.copy_assign(version_pos, MajorMinor::VERSION_1_0);
         }
     }
     Ok(())
