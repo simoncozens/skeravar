@@ -13,78 +13,75 @@ use write_fonts::{
     read::{
         collections::IntSet,
         tables::gpos::{ValueFormat, ValueRecord},
-        FontData,
     },
     types::Offset16,
 };
 
 pub(crate) fn compute_effective_format(
-    value_record: &ValueRecord,
+    value_record: &ValueRecord<'_>,
     strip_hints: bool,
     strip_empty: bool,
-    font_data: FontData,
     plan: Option<&Plan>,
 ) -> ValueFormat {
     let mut value_format = ValueFormat::empty();
 
-    if let Some(x_placement) = value_record.x_placement {
-        if !strip_empty || x_placement.get() != 0 {
+    if let Some(x_placement) = value_record.x_placement() {
+        if !strip_empty || x_placement != 0 {
             value_format |= ValueFormat::X_PLACEMENT;
         }
     }
 
-    if let Some(y_placement) = value_record.y_placement {
-        if !strip_empty || y_placement.get() != 0 {
+    if let Some(y_placement) = value_record.y_placement() {
+        if !strip_empty || y_placement != 0 {
             value_format |= ValueFormat::Y_PLACEMENT;
         }
     }
 
-    if let Some(x_advance) = value_record.x_advance {
-        if !strip_empty || x_advance.get() != 0 {
+    if let Some(x_advance) = value_record.x_advance() {
+        if !strip_empty || x_advance != 0 {
             value_format |= ValueFormat::X_ADVANCE;
         }
     }
 
-    if let Some(y_advance) = value_record.y_advance {
-        if !strip_empty || y_advance.get() != 0 {
+    if let Some(y_advance) = value_record.y_advance() {
+        if !strip_empty || y_advance != 0 {
             value_format |= ValueFormat::Y_ADVANCE;
         }
     }
 
-    if !value_record.x_placement_device.get().is_null() && !strip_hints {
-        update_var_flag(
-            value_record.x_placement_device(font_data),
-            ValueFormat::X_PLACEMENT_DEVICE,
-            &mut value_format,
-            plan,
-        );
-    }
-
-    if !value_record.y_placement_device.get().is_null() && !strip_hints {
-        update_var_flag(
-            value_record.y_placement_device(font_data),
-            ValueFormat::Y_PLACEMENT_DEVICE,
-            &mut value_format,
-            plan,
-        );
-    }
-
-    if !value_record.x_advance_device.get().is_null() && !strip_hints {
-        update_var_flag(
-            value_record.x_advance_device(font_data),
-            ValueFormat::X_ADVANCE_DEVICE,
-            &mut value_format,
-            plan,
-        );
-    }
-
-    if !value_record.y_advance_device.get().is_null() && !strip_hints {
-        update_var_flag(
-            value_record.y_advance_device(font_data),
-            ValueFormat::Y_ADVANCE_DEVICE,
-            &mut value_format,
-            plan,
-        );
+    if !strip_hints {
+        if let Some(device) = value_record.x_placement_device() {
+            update_var_flag(
+                Some(device),
+                ValueFormat::X_PLACEMENT_DEVICE,
+                &mut value_format,
+                plan,
+            );
+        }
+        if let Some(device) = value_record.y_placement_device() {
+            update_var_flag(
+                Some(device),
+                ValueFormat::Y_PLACEMENT_DEVICE,
+                &mut value_format,
+                plan,
+            );
+        }
+        if let Some(device) = value_record.x_advance_device() {
+            update_var_flag(
+                Some(device),
+                ValueFormat::X_ADVANCE_DEVICE,
+                &mut value_format,
+                plan,
+            );
+        }
+        if let Some(device) = value_record.y_advance_device() {
+            update_var_flag(
+                Some(device),
+                ValueFormat::Y_ADVANCE_DEVICE,
+                &mut value_format,
+                plan,
+            );
+        }
     }
     value_format
 }
@@ -99,27 +96,18 @@ fn update_var_flag(
         let varidx_map = plan_ref.layout_varidx_delta_map.borrow();
 
         if let Some(varidx) = value.transpose().ok().flatten() {
-            {
-                match varidx {
-                    DeviceOrVariationIndex::Device(_device) => {
-                        // For device tables, we conservatively assume they may have non-zero deltas and keep the flag
-                        *format |= flag;
-                        // log::debug!("Device table found, keeping format flag {:?} for now", flag);
-                    }
-                    DeviceOrVariationIndex::VariationIndex(varidx) => {
-                        let ix = varidx.delta_set_inner_index() as u32
-                            | ((varidx.delta_set_outer_index() as u32) << 16);
-                        if let Some((first, _)) = varidx_map.get(&ix) {
-                            if *first != NO_VARIATION_INDEX {
-                                //     log::debug!(
-                                //     "Variation index has non-zero delta , keeping format flag {:?}.",
-                                //     flag
-                                // );
-                                *format |= flag;
-                                return;
-                            }
-                        } else {
-                            // log::debug!("Variation index not found in delta map, clearing format flag {:?} to be safe.", flag);
+            match varidx {
+                DeviceOrVariationIndex::Device(_device) => {
+                    // For device tables, we conservatively assume they may have non-zero deltas and keep the flag
+                    *format |= flag;
+                }
+                DeviceOrVariationIndex::VariationIndex(varidx) => {
+                    let ix = varidx.delta_set_inner_index() as u32
+                        | ((varidx.delta_set_outer_index() as u32) << 16);
+                    if let Some((first, _)) = varidx_map.get(&ix) {
+                        if *first != NO_VARIATION_INDEX {
+                            *format |= flag;
+                            return;
                         }
                     }
                 }
@@ -130,43 +118,23 @@ fn update_var_flag(
         *format |= flag;
     }
 }
+
 /// Apply delta to a base value if applicable during instancing.
 /// For now, we don't apply deltas at the base value level as the device/varidx handling
 /// is done through the Device subset logic. This is a placeholder for future enhancements.
-fn apply_value_delta(
-    value_record: &ValueRecord,
-    which_one: ValueFormat,
-    font_data: FontData,
-    plan: &Plan,
-) -> i16 {
+fn apply_value_delta(value_record: &ValueRecord<'_>, which_one: ValueFormat, plan: &Plan) -> i16 {
     let base = match which_one {
-        ValueFormat::X_PLACEMENT => value_record.x_placement.unwrap_or_default().get(),
-        ValueFormat::Y_PLACEMENT => value_record.y_placement.unwrap_or_default().get(),
-        ValueFormat::X_ADVANCE => value_record.x_advance.unwrap_or_default().get(),
-        ValueFormat::Y_ADVANCE => value_record.y_advance.unwrap_or_default().get(),
+        ValueFormat::X_PLACEMENT => value_record.x_placement().unwrap_or_default(),
+        ValueFormat::Y_PLACEMENT => value_record.y_placement().unwrap_or_default(),
+        ValueFormat::X_ADVANCE => value_record.x_advance().unwrap_or_default(),
+        ValueFormat::Y_ADVANCE => value_record.y_advance().unwrap_or_default(),
         _ => 0, // For device/varidx fields, the deltas are handled in the device subset logic}
     };
     let device_offset = match which_one {
-        ValueFormat::X_PLACEMENT => value_record
-            .x_placement_device(font_data)
-            .transpose()
-            .ok()
-            .flatten(),
-        ValueFormat::Y_PLACEMENT => value_record
-            .y_placement_device(font_data)
-            .transpose()
-            .ok()
-            .flatten(),
-        ValueFormat::X_ADVANCE => value_record
-            .x_advance_device(font_data)
-            .transpose()
-            .ok()
-            .flatten(),
-        ValueFormat::Y_ADVANCE => value_record
-            .y_advance_device(font_data)
-            .transpose()
-            .ok()
-            .flatten(),
+        ValueFormat::X_PLACEMENT => value_record.x_placement_device().transpose().ok().flatten(),
+        ValueFormat::Y_PLACEMENT => value_record.y_placement_device().transpose().ok().flatten(),
+        ValueFormat::X_ADVANCE => value_record.x_advance_device().transpose().ok().flatten(),
+        ValueFormat::Y_ADVANCE => value_record.y_advance_device().transpose().ok().flatten(),
         _ => None,
     };
     if let Some(DeviceOrVariationIndex::VariationIndex(varidx)) = device_offset {
@@ -181,38 +149,37 @@ fn apply_value_delta(
     base
 }
 
-impl<'a> SubsetTable<'a> for ValueRecord {
-    type ArgsForSubset = (ValueFormat, FontData<'a>);
+impl<'a> SubsetTable<'a> for ValueRecord<'_> {
+    type ArgsForSubset = ValueFormat;
     type Output = ();
 
     fn subset(
         &self,
-        _plan: &Plan,
+        plan: &Plan,
         s: &mut Serializer,
-        args: Self::ArgsForSubset,
+        new_format: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
-        let (new_format, font_data) = args;
         if new_format.is_empty() {
             return Ok(());
         }
 
         if new_format.contains(ValueFormat::X_PLACEMENT) {
-            let value = apply_value_delta(self, ValueFormat::X_PLACEMENT, font_data, _plan);
+            let value = apply_value_delta(self, ValueFormat::X_PLACEMENT, plan);
             s.embed(value)?;
         }
 
         if new_format.contains(ValueFormat::Y_PLACEMENT) {
-            let value = apply_value_delta(self, ValueFormat::Y_PLACEMENT, font_data, _plan);
+            let value = apply_value_delta(self, ValueFormat::Y_PLACEMENT, plan);
             s.embed(value)?;
         }
 
         if new_format.contains(ValueFormat::X_ADVANCE) {
-            let value = apply_value_delta(self, ValueFormat::X_ADVANCE, font_data, _plan);
+            let value = apply_value_delta(self, ValueFormat::X_ADVANCE, plan);
             s.embed(value)?;
         }
 
         if new_format.contains(ValueFormat::Y_ADVANCE) {
-            let value = apply_value_delta(self, ValueFormat::Y_ADVANCE, font_data, _plan);
+            let value = apply_value_delta(self, ValueFormat::Y_ADVANCE, plan);
             s.embed(value)?;
         }
 
@@ -222,34 +189,34 @@ impl<'a> SubsetTable<'a> for ValueRecord {
 
         copy_device(
             s,
-            _plan,
+            plan,
             new_format,
             ValueFormat::X_PLACEMENT_DEVICE,
-            self.x_placement_device(font_data),
+            self.x_placement_device(),
         )?;
 
         copy_device(
             s,
-            _plan,
+            plan,
             new_format,
             ValueFormat::Y_PLACEMENT_DEVICE,
-            self.y_placement_device(font_data),
+            self.y_placement_device(),
         )?;
 
         copy_device(
             s,
-            _plan,
+            plan,
             new_format,
             ValueFormat::X_ADVANCE_DEVICE,
-            self.x_advance_device(font_data),
+            self.x_advance_device(),
         )?;
 
         copy_device(
             s,
-            _plan,
+            plan,
             new_format,
             ValueFormat::Y_ADVANCE_DEVICE,
-            self.y_advance_device(font_data),
+            self.y_advance_device(),
         )?;
 
         Ok(())
@@ -291,30 +258,23 @@ fn copy_device(
     }
 }
 
-pub(crate) fn collect_variation_indices(
-    value_record: &ValueRecord,
-    font_data: FontData,
-    plan: &Plan,
-    varidx_set: &mut IntSet<u32>,
-) {
-    let value_format = value_record.format;
-    if !value_format.intersects(ValueFormat::ANY_DEVICE_OR_VARIDX) {
-        return;
-    }
+impl CollectVariationIndices for ValueRecord<'_> {
+    fn collect_variation_indices(&self, plan: &Plan, varidx_set: &mut IntSet<u32>) {
+        if !self.format().intersects(ValueFormat::ANY_DEVICE_OR_VARIDX) {
+            return;
+        }
 
-    if let Some(Ok(x_pla_device)) = value_record.x_placement_device(font_data) {
-        x_pla_device.collect_variation_indices(plan, varidx_set);
-    }
-
-    if let Some(Ok(y_pla_device)) = value_record.y_placement_device(font_data) {
-        y_pla_device.collect_variation_indices(plan, varidx_set);
-    }
-
-    if let Some(Ok(x_adv_device)) = value_record.x_advance_device(font_data) {
-        x_adv_device.collect_variation_indices(plan, varidx_set);
-    }
-
-    if let Some(Ok(y_adv_device)) = value_record.y_advance_device(font_data) {
-        y_adv_device.collect_variation_indices(plan, varidx_set);
+        for device in [
+            self.x_placement_device(),
+            self.y_placement_device(),
+            self.x_advance_device(),
+            self.y_advance_device(),
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+        {
+            device.collect_variation_indices(plan, varidx_set);
+        }
     }
 }
