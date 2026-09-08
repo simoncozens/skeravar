@@ -84,8 +84,9 @@ impl Subset for Glyf<'_> {
 
         // _populate_subset_glyphs
         for (new_gid, old_gid) in &plan.new_to_old_gid_list {
-            match loca.get_glyf(*old_gid, self) {
-                Ok(maybe_glyph) => {
+            match loca.get(*old_gid, self) {
+                Some(loca_glyph) => {
+                    let maybe_glyph = loca_glyph.into_glyph();
                     let subset_glyph = if !plan.normalized_coords.is_empty() {
                         // This is old_gid since we are pretending to be the old font when applying deltas
                         compile_bytes_with_deltas(
@@ -113,7 +114,7 @@ impl Subset for Glyf<'_> {
                     max_offset += padded_size(trimmed_len) as u32;
                     subset_glyphs.push(subset_glyph);
                 }
-                _ => {
+                None => {
                     return Err(SubsetTableError(Glyf::TAG));
                 }
             }
@@ -1416,7 +1417,10 @@ mod test {
 
         let loca = font.loca(None).unwrap();
         let glyf = font.glyf().unwrap();
-        let glyph = loca.get_glyf(GlyphId::from(1_u16), &glyf).unwrap().unwrap();
+        let glyph = loca
+            .get(GlyphId::from(1_u16), &glyf)
+            .and_then(|g| g.into_glyph())
+            .unwrap();
 
         let subset_output = subset_glyph(Some(&glyph), &plan);
         assert_eq!(subset_output.len(), 23);
@@ -1436,7 +1440,10 @@ mod test {
 
         let loca = font.loca(None).unwrap();
         let glyf = font.glyf().unwrap();
-        let glyph = loca.get_glyf(GlyphId::from(4_u16), &glyf).unwrap().unwrap();
+        let glyph = loca
+            .get(GlyphId::from(4_u16), &glyf)
+            .and_then(|g| g.into_glyph())
+            .unwrap();
         plan.glyph_map
             .insert(GlyphId::from(1_u16), GlyphId::from(2_u16));
 
