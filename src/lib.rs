@@ -482,6 +482,18 @@ struct Os2Info {
 }
 
 impl Plan {
+    fn has_identity_glyph_map(&self) -> bool {
+        self.num_output_glyphs == self.font_num_glyphs
+            && self.new_to_old_gid_list.len() == self.font_num_glyphs
+            && self
+                .new_to_old_gid_list
+                .iter()
+                .enumerate()
+                .all(|(gid, &(new_gid, old_gid))| {
+                    new_gid.to_u32() as usize == gid && old_gid == new_gid
+                })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         input_gids: &IntSet<GlyphId>,
@@ -1776,6 +1788,28 @@ pub fn subset_font(font: &FontRef, plan: &Plan) -> Result<Vec<u8>, SubsetError> 
         let tag = record.tag();
         if should_drop_table(tag, plan) {
             continue;
+        }
+
+        // CBDT is handled together with CBLC. Avoid allocating a serializer sized for the
+        // (typically much larger) bitmap-data table when there is nothing to do here.
+        if tag == Cbdt::TAG {
+            continue;
+        }
+
+        // When glyph ids are unchanged, the bitmap location and data tables need no rewriting.
+        // Borrow them directly until FontBuilder assembles the final font instead of copying the
+        // bitmap data into an intermediate buffer first.
+        if tag == Cblc::TAG {
+            if let (Ok(cblc), Ok(cbdt)) = (font.cblc(), font.cbdt()) {
+                if cblc::can_passthrough_bitmap_tables(&cblc, &cbdt, plan) {
+                    // Tables are unchanged, so recomputing their checksums yields the
+                    // originals; `add_raw` is used because the released write-fonts does
+                    // not yet expose `add_raw_with_checksum`.
+                    builder.add_raw(Cblc::TAG, cblc.offset_data().as_bytes());
+                    builder.add_raw(Cbdt::TAG, cbdt.offset_data().as_bytes());
+                    continue;
+                }
+            }
         }
 
         // TODO: add more tags with dependencies for instancing
