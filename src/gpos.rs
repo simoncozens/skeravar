@@ -36,7 +36,7 @@ use write_fonts::{
         types::Tag,
         FontRead, FontRef, ReadError, TopLevelTable,
     },
-    types::{MajorMinor, Offset16, Offset32},
+    types::{Compatible, MajorMinor, Offset16, Offset32},
     FontBuilder,
 };
 
@@ -299,6 +299,9 @@ fn subset_gpos(
             s.revert_snapshot(snap);
             s.copy_assign(version_pos, MajorMinor::VERSION_1_0);
         }
+    } else if gpos.version().compatible((1u16, 1u16)) {
+        // If version 1.1 was written but no FeatureVariations exist, downgrade to 1.0
+        s.copy_assign(version_pos, MajorMinor::VERSION_1_0);
     }
     Ok(())
 }

@@ -26,7 +26,7 @@ use write_fonts::{
             gsub::{ExtensionSubstFormat1, ExtensionSubtable, Gsub, SubstitutionLookup},
             layout::LookupFlag,
         },
-        types::{MajorMinor, Offset16, Offset32, Tag},
+        types::{Compatible, MajorMinor, Offset16, Offset32, Tag},
         FontRead, FontRef, TopLevelTable,
     },
     FontBuilder,
@@ -301,7 +301,11 @@ fn subset_gsub(
             }
             Err(e) => return Err(e),
         }
+    } else if gsub.version().compatible((1u16, 1u16)) {
+        // If version 1.1 was written but no FeatureVariations exist, downgrade to 1.0
+        s.copy_assign(version_pos, MajorMinor::VERSION_1_0);
     }
+
     Ok(())
 }
 
