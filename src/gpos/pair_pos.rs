@@ -178,9 +178,7 @@ impl<'a> SubsetTable<'a> for PairPosFormat1<'_> {
             // Instancing case: always compute effective formats to filter out device flags
             // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
             compute_effective_pair_formats_1(
-                self,
-                glyph_set,
-                false, // strip_hints=false for instancing
+                self, glyph_set, false, // strip_hints=false for instancing
                 false, // strip_empty=false
                 plan,
             )
@@ -196,14 +194,8 @@ impl<'a> SubsetTable<'a> for PairPosFormat1<'_> {
                 true
             };
 
-            compute_effective_pair_formats_1(
-                self,
-                glyph_set,
-                strip_hints,
-                true,
-                plan,
-            )
-            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
+            compute_effective_pair_formats_1(self, glyph_set, strip_hints, true, plan)
+                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
         } else {
             (self.value_format1(), self.value_format2())
         };
