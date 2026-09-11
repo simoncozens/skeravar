@@ -220,75 +220,74 @@ impl<'a> SubsetTable<'a> for ValueRecord {
             return Ok(());
         }
 
-        if new_format.contains(ValueFormat::X_PLACEMENT_DEVICE) {
-            if let Some(device) = self
-                .x_placement_device(font_data)
-                .transpose()
-                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
-            {
-                let offset_pos = s.embed(0_u16)?;
-                Offset16::serialize_subset(
-                    &device,
-                    s,
-                    _plan,
-                    &_plan.layout_varidx_delta_map.borrow(),
-                    offset_pos,
-                )?;
-            }
-        }
+        copy_device(
+            s,
+            _plan,
+            new_format,
+            ValueFormat::X_PLACEMENT_DEVICE,
+            self.x_placement_device(font_data),
+        )?;
 
-        if new_format.contains(ValueFormat::Y_PLACEMENT_DEVICE) {
-            if let Some(device) = self
-                .y_placement_device(font_data)
-                .transpose()
-                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
-            {
-                let offset_pos = s.embed(0_u16)?;
-                Offset16::serialize_subset(
-                    &device,
-                    s,
-                    _plan,
-                    &_plan.layout_varidx_delta_map.borrow(),
-                    offset_pos,
-                )?;
-            }
-        }
+        copy_device(
+            s,
+            _plan,
+            new_format,
+            ValueFormat::Y_PLACEMENT_DEVICE,
+            self.y_placement_device(font_data),
+        )?;
 
-        if new_format.contains(ValueFormat::X_ADVANCE_DEVICE) {
-            if let Some(device) = self
-                .x_advance_device(font_data)
-                .transpose()
-                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
-            {
-                let offset_pos = s.embed(0_u16)?;
-                Offset16::serialize_subset(
-                    &device,
-                    s,
-                    _plan,
-                    &_plan.layout_varidx_delta_map.borrow(),
-                    offset_pos,
-                )?;
-            }
-        }
+        copy_device(
+            s,
+            _plan,
+            new_format,
+            ValueFormat::X_ADVANCE_DEVICE,
+            self.x_advance_device(font_data),
+        )?;
 
-        if new_format.contains(ValueFormat::Y_ADVANCE_DEVICE) {
-            if let Some(device) = self
-                .y_advance_device(font_data)
-                .transpose()
-                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
-            {
-                let offset_pos = s.embed(0_u16)?;
-                Offset16::serialize_subset(
-                    &device,
-                    s,
-                    _plan,
-                    &_plan.layout_varidx_delta_map.borrow(),
-                    offset_pos,
-                )?;
-            }
-        }
+        copy_device(
+            s,
+            _plan,
+            new_format,
+            ValueFormat::Y_ADVANCE_DEVICE,
+            self.y_advance_device(font_data),
+        )?;
 
         Ok(())
+    }
+}
+
+/// Serialize one Device/VariationIndex offset field of a [`ValueRecord`].
+///
+/// The field's presence is determined solely by `new_format`: whenever the flag
+/// is set we must emit exactly two bytes, even if the source record had a null
+/// (or unreadable) offset. Writing nothing in that case would shorten the record
+/// and desynchronize every following record in the parent table.
+fn copy_device(
+    s: &mut Serializer,
+    plan: &Plan,
+    new_format: ValueFormat,
+    flag: ValueFormat,
+    device: Option<Result<DeviceOrVariationIndex<'_>, ReadError>>,
+) -> Result<(), SerializeErrorFlags> {
+    if !new_format.contains(flag) {
+        return Ok(());
+    }
+
+    // Reserve the offset slot up front so the record always has the size implied
+    // by `new_format`, regardless of whether the source has a real device table.
+    let offset_pos = s.embed(0_u16)?;
+
+    // A null offset (or a broken device table) leaves the slot as a null offset.
+    let Some(Ok(device)) = device else {
+        return Ok(());
+    };
+
+    // Mirrors HarfBuzz's ValueFormat::copy_device: if the device table cannot be
+    // serialized it is simply dropped, leaving a null offset behind.
+    let varidx_map = plan.layout_varidx_delta_map.borrow();
+    match Offset16::serialize_subset(&device, s, plan, &varidx_map, offset_pos) {
+        Ok(()) => Ok(()),
+        Err(_) => Ok(()),
     }
 }
 
