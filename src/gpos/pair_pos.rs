@@ -47,7 +47,6 @@ fn compute_effective_pair_formats_1(
     glyph_set: &IntSet<GlyphId>,
     strip_hints: bool,
     strip_empty: bool,
-    font_data: FontData,
     plan: &Plan,
 ) -> Result<(ValueFormat, ValueFormat), ReadError> {
     let mut new_format1 = ValueFormat::empty();
@@ -64,6 +63,9 @@ fn compute_effective_pair_formats_1(
             Err(ReadError::NullOffset) => continue,
             other => other,
         }?;
+        // Device/VariationIndex offsets in a PairSet's value records are relative
+        // to the PairSet table, not to the enclosing PairPos subtable.
+        let font_data = pair_set.offset_data();
         for pair_value_rec in pair_set.pair_value_records().iter() {
             let pair_value_rec = pair_value_rec?;
             let second_glyph = pair_value_rec.second_glyph();
@@ -180,7 +182,6 @@ impl<'a> SubsetTable<'a> for PairPosFormat1<'_> {
                 glyph_set,
                 false, // strip_hints=false for instancing
                 false, // strip_empty=false
-                self.offset_data(),
                 plan,
             )
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
@@ -200,7 +201,6 @@ impl<'a> SubsetTable<'a> for PairPosFormat1<'_> {
                 glyph_set,
                 strip_hints,
                 true,
-                self.offset_data(),
                 plan,
             )
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
