@@ -208,7 +208,7 @@ impl<'a> SubsetTable<'a> for PairPosFormat1<'_> {
         let pair_sets = self.pair_sets();
 
         let (glyphs, pairset_idxes) =
-            intersected_glyphs_and_indices(&coverage, glyph_set, glyph_map);
+            intersected_glyphs_and_indices(&coverage, glyph_set, glyph_map, self.pair_set_count());
         if glyphs.is_empty() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
