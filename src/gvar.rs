@@ -154,8 +154,11 @@ fn instantiate_gvar(
             new_variations.push(GlyphVariations::new(*new_gid, vec![]));
         }
     }
-    if new_variations.is_empty() {
-        // No variations at all, we can skip the gvar table
+    // HarfBuzz drops an instanced gvar when no tuple variations remain for any
+    // glyph: its compile_shared_tuples() returns false when the shared coords
+    // map is empty, which propagates as a "subsetted to empty" result and the
+    // table is omitted. Match that so we don't emit an all-empty gvar.
+    if !new_variations.iter().any(|gv| gv.axis_count().is_some()) {
         log::trace!(
             "Removing gvar, because there are no variations for any glyph after instantiation."
         );
