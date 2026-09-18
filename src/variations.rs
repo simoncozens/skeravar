@@ -38,6 +38,21 @@ use write_fonts::{
 };
 
 pub(crate) mod featurevar;
+
+/// HarfBuzz's `roundf` for a `double` argument: `floor(x + .5)`, i.e. round
+/// half towards positive infinity (unlike Rust's `round`, which rounds half
+/// away from zero). HarfBuzz redefines `roundf` in `hb-algs.hh` and has
+/// separate `float`/`double` overloads; this is the `double` one, used where
+/// HarfBuzz writes `roundf((double) x)`.
+///
+/// For `float` arguments (`roundf(x)`), use `OtRound::ot_round`, which is the
+/// same rule evaluated in `f32` and so matches HarfBuzz's `float` overload.
+/// Returns `i32` because HarfBuzz rounds variation store deltas with
+/// `hb_clamp_to<int>` before storing them.
+#[inline]
+pub(crate) fn hb_round(x: f64) -> i32 {
+    (x + 0.5).floor() as i32
+}
 pub(crate) mod solver;
 
 /// Hashable wrapper around a region (axis coordinates map).
@@ -821,7 +836,9 @@ impl TupleVariations {
         for tuple_var in &self.tuple_vars {
             for (idx, is_active) in tuple_var.indices.iter().enumerate() {
                 if *is_active && idx < cvt_values.len() {
-                    let delta = tuple_var.deltas_x[idx].round() as i16;
+                    // HarfBuzz: `cvt_prime[i] += (int) roundf (cvt_deltas[i])`
+                    // with a `float` argument, i.e. the f32 overload.
+                    let delta: i16 = tuple_var.deltas_x[idx].ot_round();
                     cvt_values[idx] = cvt_values[idx].saturating_add(delta);
                 }
             }
@@ -1198,7 +1215,10 @@ impl ItemVariations {
                 let r = &tuple_var.axis_tuples;
                 if !used_regions.contains_key(r) {
                     // Oddly harfbuzz doesn't check deltas_y here.
-                    let all_zeros = tuple_var.deltas_x.iter().all(|&d| d.round() == 0.0);
+                    let all_zeros = tuple_var
+                        .deltas_x
+                        .iter()
+                        .all(|&d| hb_round(f64::from(d)) == 0);
                     // **After instantiation**, "inactive" regions (all axes (0,0,0)) can still
                     // carry non-zero deltas representing rebased defaults at the new instance point.
                     // We keep those regions to preserve HarfBuzz behavior.
@@ -1310,7 +1330,7 @@ impl ItemVariations {
                 };
 
                 for i in 0..num_rows {
-                    let rounded_delta = tuple_var.deltas_x[i].round() as i32;
+                    let rounded_delta = hb_round(f64::from(tuple_var.deltas_x[i]));
                     self.delta_rows[start_row + i][col_idx] += rounded_delta;
                     self.has_long |= !(-65536..=65535).contains(&rounded_delta);
                 }
