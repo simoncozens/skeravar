@@ -26,20 +26,18 @@ use write_fonts::{
                 PaintVarSkewAroundCenter, PaintVarSolid, PaintVarSweepGradient, PaintVarTransform,
                 PaintVarTranslate, VarAffine2x3, VarColorLine, VarColorStop,
             },
-            variations::{
-                DeltaSetIndexMap, FloatItemDelta, FloatItemDeltaTarget, NO_VARIATION_INDEX,
-            },
+            variations::{DeltaSetIndexMap, NO_VARIATION_INDEX},
         },
         FontRef, MinByteRange, TopLevelTable,
     },
-    types::{GlyphId, Offset24, Offset32},
+    types::{F48Dot16, GlyphId, Offset24, Offset32},
     FontBuilder,
 };
 
 /// Helper for applying deltas during COLR instantiation
 #[derive(Clone, Copy)]
 pub struct ColrInstancer<'a> {
-    delta_map: &'a FnvHashMap<u32, (u32, FloatItemDelta)>,
+    delta_map: &'a FnvHashMap<u32, (u32, F48Dot16)>,
     old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
     delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
     has_variations: bool,
@@ -48,7 +46,7 @@ pub struct ColrInstancer<'a> {
 
 impl<'a> ColrInstancer<'a> {
     pub fn new(
-        delta_map: &'a FnvHashMap<u32, (u32, FloatItemDelta)>,
+        delta_map: &'a FnvHashMap<u32, (u32, F48Dot16)>,
         old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
         delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
         has_variations: bool,
@@ -82,19 +80,19 @@ impl<'a> ColrInstancer<'a> {
         }
     }
 
-    fn get_float_delta(&self, var_idx: u32, field_idx: usize) -> FloatItemDelta {
+    fn get_float_delta(&self, var_idx: u32, field_idx: usize) -> F48Dot16 {
         if !self.has_variations || var_idx == NO_VARIATION_INDEX || field_idx > 15 {
-            return FloatItemDelta::ZERO;
+            return F48Dot16::ZERO;
         }
 
         let actual_idx = var_idx.wrapping_add(field_idx as u32);
         let lookup_idx = if let Some(map) = self.delta_set_index_map {
             let Ok(mapped_entry) = map.get(actual_idx) else {
-                return FloatItemDelta::ZERO;
+                return F48Dot16::ZERO;
             };
             let mapped = ((mapped_entry.outer as u32) << 16) + mapped_entry.inner as u32;
             if mapped == NO_VARIATION_INDEX {
-                return FloatItemDelta::ZERO;
+                return F48Dot16::ZERO;
             }
             mapped
         } else {
@@ -104,15 +102,15 @@ impl<'a> ColrInstancer<'a> {
         self.delta_map
             .get(&lookup_idx)
             .map(|(_, delta)| *delta)
-            .unwrap_or(FloatItemDelta::ZERO)
+            .unwrap_or(F48Dot16::ZERO)
     }
 
     pub fn get_design_delta(&self, var_idx: u32, field_idx: usize) -> f32 {
-        FWord::new(0).apply_float_delta(self.get_float_delta(var_idx, field_idx))
+        FWord::new(0).apply_delta(self.get_float_delta(var_idx, field_idx))
     }
 
     pub fn get_f2dot14_delta(&self, var_idx: u32, field_idx: usize) -> f32 {
-        F2Dot14::from_bits(0).apply_float_delta(self.get_float_delta(var_idx, field_idx))
+        F2Dot14::from_bits(0).apply_delta(self.get_float_delta(var_idx, field_idx))
     }
 }
 

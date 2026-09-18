@@ -76,8 +76,9 @@ use skrifa::{
         tables::{
             fvar::Fvar,
             glyf::PointFlags,
-            variations::{DeltaSetIndex, FloatItemDelta, ItemVariationStore, NO_VARIATION_INDEX},
+            variations::{DeltaSetIndex, ItemVariationStore, NO_VARIATION_INDEX},
         },
+        types::F48Dot16,
         ReadError,
     },
     MetadataProvider,
@@ -420,7 +421,7 @@ pub struct Plan {
     // COLR varstore retained varidx mapping
     colr_varstore_inner_maps: Vec<IncBiMap>,
     // COLR table old variation index -> (New varidx, new delta) mapping
-    colr_varidx_delta_map: FnvHashMap<u32, (u32, FloatItemDelta)>,
+    colr_varidx_delta_map: FnvHashMap<u32, (u32, F48Dot16)>,
     // COLR table new delta set index -> new var index mapping
     // Wrapped in RefCell to allow mutation during instantiation
     colr_new_deltaset_idx_varidx_map: RefCell<FnvHashMap<u32, u32>>,
@@ -1422,7 +1423,7 @@ fn remap_variation_indices(
                 inner: (var_idx & 0xFFFF) as u16,
             };
             if let Ok(value) = var_store.compute_delta(index, normalized_coords) {
-                delta = value;
+                delta = value.to_i32();
             }
         }
 
@@ -1446,7 +1447,7 @@ fn remap_variation_indices_float(
     normalized_coords: &[F2Dot14],
     calculate_delta: bool,
     no_variations: bool,
-    varidx_delta_map: &mut FnvHashMap<u32, (u32, FloatItemDelta)>,
+    varidx_delta_map: &mut FnvHashMap<u32, (u32, F48Dot16)>,
 ) {
     let vardata_count = var_store.item_variation_data_count() as u32;
     if vardata_count == 0 || varidx_set.is_empty() {
@@ -1467,13 +1468,13 @@ fn remap_variation_indices_float(
             new_major += 1;
         }
 
-        let mut delta = FloatItemDelta::ZERO;
+        let mut delta = F48Dot16::ZERO;
         if calculate_delta {
             let index = DeltaSetIndex {
                 outer: major as u16,
                 inner: (var_idx & 0xFFFF) as u16,
             };
-            if let Ok(value) = var_store.compute_float_delta(index, normalized_coords) {
+            if let Ok(value) = var_store.compute_delta(index, normalized_coords) {
                 delta = value;
             }
         }
@@ -1518,11 +1519,11 @@ type DeltaSetIdxVarIdxMap = FnvHashMap<u32, u32>;
 fn remap_delta_set_indices(
     delta_set_indices: &IntSet<u32>,
     deltaset_idx_var_idx_map: &DeltaSetIdxVarIdxMap,
-    varidx_delta_map: &FnvHashMap<u32, (u32, FloatItemDelta)>,
+    varidx_delta_map: &FnvHashMap<u32, (u32, F48Dot16)>,
 ) -> (
     DeltaSetIdxVarIdxMap,
     DeltaSetIdxVarIdxMap,
-    FnvHashMap<u32, (u32, FloatItemDelta)>,
+    FnvHashMap<u32, (u32, F48Dot16)>,
 ) {
     let mut new_deltaset_idx_varidx_map = FnvHashMap::default();
     let mut old_to_new_deltaset_idx_map = FnvHashMap::default();
