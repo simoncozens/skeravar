@@ -101,13 +101,7 @@ fn instantiate_gvar(
     //     plan.axes_triple_distances
     // );
 
-    let retained_axis_tags = plan
-        .axis_tags
-        .iter()
-        .enumerate()
-        .filter(|(ix, _)| plan.axes_index_map.contains_key(ix))
-        .map(|(_, tag)| *tag)
-        .collect::<Vec<_>>();
+    let retained_axis_tags = plan.axis_tags.clone();
 
     for (new_gid, old_gid) in plan.new_to_old_gid_list.iter() {
         if let Some(glyph_var) = gvar
@@ -169,8 +163,10 @@ fn instantiate_gvar(
     //     new_axis_count,
     //     new_variations.len()
     // );
-    let new_gvar = WriteGvar::new(new_variations, new_axis_count)
-        .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_OTHER)?;
+    let new_gvar = WriteGvar::new(new_variations, new_axis_count).map_err(|e| {
+        log::warn!("Failed to build instantiated gvar: {e:?}");
+        SerializeErrorFlags::SERIALIZE_ERROR_OTHER
+    })?;
 
     builder
         .add_table(&new_gvar)

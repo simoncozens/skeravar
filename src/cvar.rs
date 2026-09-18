@@ -153,14 +153,11 @@ fn instantiate_cvar_partially(
         false, // No IUP optimization for CVT
     )?;
 
-    // Get retained axis tags for normalization
-    let retained_axis_tags = plan
-        .axis_tags
-        .iter()
-        .enumerate()
-        .filter(|(ix, _)| plan.axes_index_map.contains_key(ix))
-        .map(|(_, tag)| *tag)
-        .collect::<Vec<_>>();
+    // Get retained axis tags for normalization. `plan.axis_tags` already holds
+    // exactly the retained (unpinned) axes, in order; do not filter it by
+    // position against `axes_index_map` (keyed by *old* axis index), which
+    // drops retained axes that are not a prefix of the original axis order.
+    let retained_axis_tags = plan.axis_tags.clone();
 
     // Normalize axes: ensure all tuples have the same set of axes
     tuple_variations.normalize_axes(&retained_axis_tags);
