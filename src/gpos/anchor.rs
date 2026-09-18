@@ -1,18 +1,18 @@
 //! impl subset() for Anchor subtable
 
 use crate::{
+    layout::{apply_coordinate_delta, is_no_variation_index},
     offset::SerializeSubset,
     serialize::{SerializeErrorFlags, Serializer},
     CollectVariationIndices, Plan, SubsetFlags, SubsetTable,
 };
-use skrifa::raw::tables::{gpos::DeviceOrVariationIndex, layout::VariationIndex};
+use skrifa::raw::tables::gpos::DeviceOrVariationIndex;
 use write_fonts::{
     read::{
         collections::IntSet,
         tables::gpos::{AnchorFormat1, AnchorFormat2, AnchorFormat3, AnchorTable},
         FontData, MinByteRange,
     },
-    tables::variations::common_builder::NO_VARIATION_INDEX,
     types::Offset16,
 };
 
@@ -67,44 +67,6 @@ impl<'a> SubsetTable<'a> for AnchorFormat2<'a> {
         } else {
             s.embed_bytes(self.min_table_bytes()).map(|_| ())
         }
-    }
-}
-
-/// Apply delta to an anchor coordinate if applicable during instancing.
-fn apply_coordinate_delta(
-    base_value: i16,
-    varidx: Option<&VariationIndex<'_>>,
-    plan: &Plan,
-) -> i16 {
-    // The deltas are handled through the Device/VariationIndex subset in the offset handling
-    if let Some(varidx) = varidx {
-        // Encode the two-level variation index as a single u32:
-        // combine outer and inner indices as (outer << 16) | inner
-        let combined_idx = ((varidx.delta_set_outer_index() as u32) << 16)
-            | (varidx.delta_set_inner_index() as u32);
-        if let Some((_idx, delta)) = plan.layout_varidx_delta_map.borrow().get(&combined_idx) {
-            return base_value.saturating_add(*delta as i16);
-        }
-    }
-    base_value
-}
-
-fn is_no_variation_index(varidx: Option<&VariationIndex<'_>>, plan: &Plan) -> bool {
-    match varidx {
-        Some(varidx) => {
-            let combined_idx = ((varidx.delta_set_outer_index() as u32) << 16)
-                | (varidx.delta_set_inner_index() as u32);
-            let mapped_index = plan
-                .layout_varidx_delta_map
-                .borrow()
-                .get(&combined_idx)
-                .copied();
-            match mapped_index {
-                Some((idx, _delta)) => idx == NO_VARIATION_INDEX,
-                None => false,
-            }
-        }
-        None => true,
     }
 }
 

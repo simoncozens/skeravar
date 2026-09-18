@@ -166,6 +166,50 @@ impl CollectVariationIndices for VariationIndex<'_> {
     }
 }
 
+/// Apply the instanced delta (if any) for a variation index to a base value.
+///
+/// Mirrors HarfBuzz's use of `plan->layout_variation_idx_delta_map`, e.g. in
+/// `AnchorFormat3::subset` and `CaretValueFormat3::subset`. The base value is
+/// adjusted here; the variation index itself is remapped when the
+/// Device/VariationIndex is serialized.
+pub(crate) fn apply_coordinate_delta(
+    base_value: i16,
+    varidx: Option<&VariationIndex<'_>>,
+    plan: &Plan,
+) -> i16 {
+    if let Some(varidx) = varidx {
+        // Encode the two-level variation index as a single u32:
+        // combine outer and inner indices as (outer << 16) | inner
+        let combined_idx = ((varidx.delta_set_outer_index() as u32) << 16)
+            | (varidx.delta_set_inner_index() as u32);
+        if let Some((_idx, delta)) = plan.layout_varidx_delta_map.borrow().get(&combined_idx) {
+            return base_value.saturating_add(*delta as i16);
+        }
+    }
+    base_value
+}
+
+/// Whether this variation index is remapped to "no variation" by instancing,
+/// in which case callers drop the device table.
+pub(crate) fn is_no_variation_index(varidx: Option<&VariationIndex<'_>>, plan: &Plan) -> bool {
+    match varidx {
+        Some(varidx) => {
+            let combined_idx = ((varidx.delta_set_outer_index() as u32) << 16)
+                | (varidx.delta_set_inner_index() as u32);
+            match plan
+                .layout_varidx_delta_map
+                .borrow()
+                .get(&combined_idx)
+                .copied()
+            {
+                Some((idx, _delta)) => idx == NO_VARIATION_INDEX,
+                None => false,
+            }
+        }
+        None => true,
+    }
+}
+
 pub(crate) struct ClassDefSubsetStruct<'a> {
     pub(crate) remap_class: bool,
     pub(crate) keep_empty_table: bool,

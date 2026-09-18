@@ -1,7 +1,7 @@
 //! impl subset() for GDEF
 
 use crate::{
-    layout::{map_gsub_glyph, ClassDefSubsetStruct},
+    layout::{apply_coordinate_delta, is_no_variation_index, map_gsub_glyph, ClassDefSubsetStruct},
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::{IterNullableHelper, SubsetOffsetArray},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
@@ -15,7 +15,7 @@ use write_fonts::{
                 AttachList, AttachPoint, CaretValue, CaretValueFormat1, CaretValueFormat2,
                 CaretValueFormat3, Gdef, LigCaretList, LigGlyph, MarkGlyphSets,
             },
-            layout::CoverageTable,
+            layout::{CoverageTable, DeviceOrVariationIndex},
         },
         types::GlyphId,
         FontRef, MinByteRange, ReadError, TopLevelTable,
@@ -518,14 +518,32 @@ impl SubsetTable<'_> for CaretValueFormat3<'_> {
             return s.embed(self.coordinate()).map(|_| ());
         }
 
-        let format_pos = s.embed(self.caret_value_format())?;
-        s.embed(self.coordinate())?;
-
-        let snap = s.snapshot();
-        let device_offset_pos = s.embed(0_u16)?;
         let Ok(device) = self.device() else {
             return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
         };
+        let varidx = match &device {
+            DeviceOrVariationIndex::VariationIndex(varidx) => Some(varidx),
+            DeviceOrVariationIndex::Device(_) => None,
+        };
+
+        // HarfBuzz applies the instanced delta to the coordinate here, using
+        // plan->layout_variation_idx_delta_map (OT/Layout/GDEF/GDEF.hh,
+        // CaretValueFormat3::subset). The variation index itself is remapped
+        // when the device table is serialized below.
+        let coordinate = apply_coordinate_delta(self.coordinate(), varidx, plan);
+
+        let format_pos = s.embed(self.caret_value_format())?;
+        s.embed(coordinate)?;
+
+        // If the variation index now maps to "no variation", drop the device
+        // table and downgrade to format 1, as HarfBuzz does.
+        if is_no_variation_index(varidx, plan) {
+            s.copy_assign(format_pos, 1_u16);
+            return Ok(());
+        }
+
+        let snap = s.snapshot();
+        let device_offset_pos = s.embed(0_u16)?;
         match Offset16::serialize_subset(
             &device,
             s,
