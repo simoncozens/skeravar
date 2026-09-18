@@ -203,6 +203,7 @@ mod test {
             &layout_features,
             &name_ids,
             &name_languages,
+            &None,
         );
 
         // subset_font used to panic here. The malformed name table is now
