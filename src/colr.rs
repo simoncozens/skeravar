@@ -858,11 +858,11 @@ impl<'a> SubsetTable<'a> for VarColorStop {
         }
 
         if varidx_base != NO_VARIATION_INDEX {
-            let Some((new_varidx, _)) = plan.colr_varidx_delta_map.get(&varidx_base) else {
-                return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
-            };
+            // Remap through the instancer so that a DeltaSetIndexMap is honoured; the
+            // stored value is a delta set index in that case, not a variation index.
+            let new_varidx = instancer.remap_varidx(varidx_base);
             // update VarIdxBase
-            s.embed(*new_varidx).map(|_| ())
+            s.embed(new_varidx).map(|_| ())
         } else {
             s.embed(varidx_base).map(|_| ())
         }
