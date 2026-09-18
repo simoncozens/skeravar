@@ -678,9 +678,12 @@ fn make_composite_glyph_with_deltas(
     {
         let mut new_component = component.clone();
         if let Anchor::Offset { .. } = component.anchor {
+            // HarfBuzz's roundf is floorf(x + 0.5f) (hb-algs.hh), i.e. round
+            // half towards positive infinity; use ot_round to match it rather
+            // than f32::round (half away from zero).
             new_component.anchor = Anchor::Offset {
-                x: transform.x.round() as i16,
-                y: transform.y.round() as i16,
+                x: transform.x.ot_round(),
+                y: transform.y.ot_round(),
             };
         }
         // Harfbuzz creates an intermediate SubsetGlyph which remaps the glyph IDs.

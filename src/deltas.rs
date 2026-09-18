@@ -6,17 +6,75 @@ use skrifa::raw::{
         gvar::{GlyphDelta, Gvar},
         variations::TupleVariation,
     },
-    types::{F2Dot14, Fixed, GlyphId, Point},
+    types::{F2Dot14, GlyphId, Point},
     ReadError,
 };
 
 pub const PHANTOM_POINT_COUNT: usize = 4;
 
+/// HarfBuzz-compatible scalar for a tuple variation.
+///
+/// HarfBuzz's `TupleVariationHeader::calculate_scalar` (hb-ot-var-common.hh)
+/// computes the scalar from the raw F2DOT14 coordinates in double precision
+/// and the callers narrow the result to f32. We reproduce that here rather
+/// than using the library's `Fixed` (16.16) scalar, whose coarser resolution
+/// can shift a delta across a rounding boundary (see the `full_instance`
+/// tests).
+fn tuple_scalar_f32(tuple: &TupleVariation<'_, GlyphDelta>, coords: &[F2Dot14]) -> Option<f32> {
+    // `compute_scalar_f32` validates the tuple (axis count, shared tuple
+    // index) and tells us when the scalar is zero. We only use it as a gate;
+    // the value itself is recomputed in double precision below to match
+    // HarfBuzz exactly.
+    tuple.compute_scalar_f32(coords)?;
+
+    let peak = tuple.peak();
+    let inter_start = tuple.intermediate_start();
+    let inter_end = tuple.intermediate_end();
+    let mut scalar = 1.0f64;
+    for i in 0..peak.len() {
+        let peak = peak.get(i).unwrap_or_default().to_bits() as i32;
+        if peak == 0 {
+            continue;
+        }
+        let coord = coords.get(i).copied().unwrap_or_default().to_bits() as i32;
+        if coord == 0 {
+            return None;
+        }
+        if coord == peak {
+            continue;
+        }
+        if let (Some(start), Some(end)) = (&inter_start, &inter_end) {
+            let start = start.get(i).unwrap_or_default().to_bits() as i32;
+            let end = end.get(i).unwrap_or_default().to_bits() as i32;
+            if start > peak || peak > end || (start < 0 && end > 0) {
+                continue;
+            }
+            if coord < start || coord > end {
+                return None;
+            }
+            if coord < peak {
+                if peak != start {
+                    scalar *= (coord - start) as f64 / (peak - start) as f64;
+                }
+            } else if peak != end {
+                scalar *= (end - coord) as f64 / (end - peak) as f64;
+            }
+        } else {
+            if coord < peak.min(0) || coord > peak.max(0) {
+                return None;
+            }
+            scalar *= coord as f64 / peak as f64;
+        }
+    }
+    let scalar = scalar as f32;
+    (scalar != 0.0).then_some(scalar)
+}
+
 /// Compute a set of deltas for the component offsets of a composite glyph.
 ///
 /// Interpolation is meaningless for component offsets so this is a
 /// specialized function that skips the expensive bits.
-pub fn composite_glyph<D: PointCoord>(
+pub fn composite_glyph<D: PointCoord + From<f32>>(
     gvar: &Gvar,
     glyph_id: GlyphId,
     coords: &[F2Dot14],
@@ -26,12 +84,16 @@ pub fn composite_glyph<D: PointCoord>(
         for tuple_delta in tuple.deltas() {
             let ix = tuple_delta.position as usize;
             if let Some(delta) = deltas.get_mut(ix) {
-                *delta += tuple_delta.apply_scalar(scalar);
+                *delta += scaled_delta::<D>(tuple_delta, scalar);
             }
         }
         Ok(())
     })?;
     Ok(())
+}
+
+fn scaled_delta<D: PointCoord + From<f32>>(delta: GlyphDelta, scalar: f32) -> Point<D> {
+    Point::new(delta.x_delta, delta.y_delta).map(D::from_i32) * D::from(scalar)
 }
 
 pub struct SimpleGlyph<'a, C: PointCoord> {
@@ -56,7 +118,7 @@ pub fn simple_glyph<C, D>(
 where
     C: PointCoord,
     D: PointCoord,
-    D: From<C>,
+    D: From<C> + From<f32>,
 {
     if iup_buffer.len() < glyph.points.len() || glyph.points.len() < PHANTOM_POINT_COUNT {
         return Err(ReadError::InvalidArrayLen);
@@ -72,13 +134,19 @@ where
     } = glyph;
     compute_deltas_for_glyph(gvar, glyph_id, coords, deltas, |scalar, tuple, deltas| {
         // Infer missing deltas by interpolation.
-        // Prepare our working buffer by converting the points to 16.16
-        // and clearing the HAS_DELTA flags.
+        // Prepare our working buffer by clearing the HAS_DELTA flags and
+        // accumulating the explicitly encoded deltas for this tuple.
         for ((flag, point), iup_point) in flags.iter_mut().zip(points).zip(&mut iup_buffer[..]) {
             *iup_point = point.map(D::from);
             flag.clear_marker(PointMarker::HAS_DELTA);
         }
-        tuple.accumulate_sparse_deltas(iup_buffer, flags, scalar)?;
+        for tuple_delta in tuple.deltas() {
+            let ix = tuple_delta.position as usize;
+            if let Some((iup_point, flag)) = iup_buffer.get_mut(ix).zip(flags.get_mut(ix)) {
+                *iup_point += scaled_delta::<D>(tuple_delta, scalar);
+                flag.set_marker(PointMarker::HAS_DELTA);
+            }
+        }
         interpolate_deltas(points, flags, contours, &mut iup_buffer[..])
             .ok_or(ReadError::OutOfBounds)?;
         for ((delta, point), iup_point) in deltas.iter_mut().zip(points).zip(iup_buffer.iter()) {
@@ -90,21 +158,19 @@ where
 }
 
 /// The common parts of simple and complex glyph processing
-fn compute_deltas_for_glyph<C, D>(
+fn compute_deltas_for_glyph<D>(
     gvar: &Gvar,
     glyph_id: GlyphId,
     coords: &[F2Dot14],
     deltas: &mut [Point<D>],
     mut apply_tuple_missing_deltas_fn: impl FnMut(
-        Fixed,
+        f32,
         TupleVariation<GlyphDelta>,
         &mut [Point<D>],
     ) -> Result<(), ReadError>,
 ) -> Result<(), ReadError>
 where
-    C: PointCoord,
-    D: PointCoord,
-    D: From<C>,
+    D: PointCoord + From<f32>,
 {
     for delta in deltas.iter_mut() {
         *delta = Default::default();
@@ -113,11 +179,14 @@ where
         // Empty variation data for a glyph is not an error.
         return Ok(());
     };
-    for (tuple, scalar) in var_data.active_tuples_at(coords) {
+    for tuple in var_data.tuples() {
+        let Some(scalar) = tuple_scalar_f32(&tuple, coords) else {
+            continue;
+        };
         // Fast path: tuple contains all points, we can simply accumulate
         // the deltas directly.
         if tuple.has_deltas_for_all_points() {
-            tuple.accumulate_dense_deltas(deltas, scalar)?;
+            accumulate_dense_deltas(&tuple, deltas, scalar);
         } else {
             // Slow path is, annoyingly, different for simple vs composite
             // so let the caller handle it
@@ -125,6 +194,21 @@ where
         }
     }
     Ok(())
+}
+
+/// Accumulate the deltas of a tuple that covers all points, scaling each by
+/// `scalar` in f32 exactly as HarfBuzz does.
+fn accumulate_dense_deltas<D: PointCoord + From<f32>>(
+    tuple: &TupleVariation<'_, GlyphDelta>,
+    deltas: &mut [Point<D>],
+    scalar: f32,
+) {
+    for tuple_delta in tuple.deltas() {
+        let ix = tuple_delta.position as usize;
+        if let Some(delta) = deltas.get_mut(ix) {
+            *delta += scaled_delta::<D>(tuple_delta, scalar);
+        }
+    }
 }
 
 /// Interpolate points without delta values, similar to the IUP hinting
