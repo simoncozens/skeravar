@@ -30,7 +30,7 @@ use write_fonts::{
 static TEST_DATA_DIR: &str = "./test-data";
 static GEN_EXPECTED_OUTPUTS_VAR: &str = "GEN_EXPECTED_OUTPUTS";
 
-const EXPECTED_FAILURE_CASES: [&str; 6] = [
+const EXPECTED_FAILURE_CASES: [&str; 7] = [
     // These all fail due to a difference in the way Harfbuzz performs layout closure
     // on lookups called from a contextual chaining substitution. We're technically more
     // accurate in how we do it.
@@ -40,8 +40,12 @@ const EXPECTED_FAILURE_CASES: [&str; 6] = [
     "layout.notonastaliqurdu-NotoNastaliqUrdu-Bold.retain-gids.all.ttf",
     // We don't support the retain-num-glyphs flag
     "retain-num-glyphs-Roboto-Regular.retain-num-glyphs.61,63,5009.ttf",
-    // IUP rounding is slightly different in the non-fontools case,
-    "glyf_partial_instancing_iup-Roboto-Variable.composite.default.all.wght=200-300-500,wdth=80-90.ttf"
+    // The whole glyf_partial_instancing_iup test set is excluded from HarfBuzz's own
+    // CI (it is absent from the `tests` list in harfbuzz/test/subset/meson.build), so
+    // its checked-in expected files have drifted; HarfBuzz HEAD no longer reproduces
+    // them. skera matches HarfBuzz HEAD here, so these are the stale expectations.
+    "glyf_partial_instancing_iup-Roboto-Variable.composite.default.all.wght=200-300-500,wdth=80-90.ttf",
+    "glyf_partial_instancing_iup-Roboto-Variable.ABC.default.all.wght=200-300-500,wdth=80-90.ttf",
 ];
 
 #[derive(Default)]
