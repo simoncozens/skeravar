@@ -1,6 +1,6 @@
 [package]
 name = "skeravar"
-version = "1.0.0"
+version = "1.0.1"
 description = "Subsetting a font file according to provided input."
 readme = "README.md"
 categories = ["text-processing"]
