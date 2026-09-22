@@ -1869,8 +1869,21 @@ fn evaluate_region(axis_tuples: &[RegionAxisCoordinates], normalized_coords: &[F
     scalar
 }
 
+/// Arguments for subsetting an [`ItemVariationStore`].
+pub(crate) struct VarStoreSubsetArgs<'a> {
+    pub inner_maps: &'a [IncBiMap],
+    pub keep_empty: bool,
+    pub optimize: bool,
+    pub use_no_variation_idx: bool,
+    /// Whether this store is the one referenced by layout `VariationIndex`
+    /// devices, i.e. GDEF's store. Only that store's instantiation may remap
+    /// `Plan::layout_varidx_delta_map`; BASE (and COLR) have their own varidx
+    /// maps and must not touch it.
+    pub remap_layout_varidx_map: bool,
+}
+
 impl<'a> SubsetTable<'a> for ItemVariationStore<'a> {
-    type ArgsForSubset = (&'a [IncBiMap], bool, bool, bool);
+    type ArgsForSubset = VarStoreSubsetArgs<'a>;
     type Output = ();
 
     fn subset(
@@ -1879,7 +1892,13 @@ impl<'a> SubsetTable<'a> for ItemVariationStore<'a> {
         s: &mut Serializer,
         args: Self::ArgsForSubset,
     ) -> Result<(), SerializeErrorFlags> {
-        let (inner_maps, keep_empty, optimize, use_no_variation_idx) = args;
+        let VarStoreSubsetArgs {
+            inner_maps,
+            keep_empty,
+            optimize,
+            use_no_variation_idx,
+            remap_layout_varidx_map,
+        } = args;
         if !keep_empty && inner_maps.is_empty() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
@@ -1897,10 +1916,12 @@ impl<'a> SubsetTable<'a> for ItemVariationStore<'a> {
                 use_no_variation_idx,
             )?;
 
-            // Apply the variation index remapping to the plan's layout_varidx_delta_map
-            // This remaps all variation indices used by layout tables (GPOS, GSUB, etc.)
-            // to account for the changes made during ItemVariationStore instantiation and optimization.
-            if !varidx_map.is_empty() {
+            // Remap the layout variation indices (GPOS/GSUB/GDEF devices) that
+            // are resolved against this store. This mirrors HarfBuzz, which
+            // performs the remap in GDEF's subset (see
+            // OT/Layout/GDEF/GDEF.hh remap_varidx_after_instantiation) - not in
+            // the generic store subset, and with BASE/COLR's own maps.
+            if remap_layout_varidx_map && !varidx_map.is_empty() {
                 remap_varidx_after_instantiation(
                     &varidx_map,
                     &mut plan.layout_varidx_delta_map.borrow_mut(),
@@ -2602,7 +2623,13 @@ mod test {
         let ret = item_varstore.subset(
             &plan,
             &mut s,
-            (&plan.base_varstore_inner_maps, false, true, true),
+            crate::variations::VarStoreSubsetArgs {
+                inner_maps: &plan.base_varstore_inner_maps,
+                keep_empty: false,
+                optimize: true,
+                use_no_variation_idx: true,
+                remap_layout_varidx_map: false,
+            },
         );
         assert_eq!(ret, Ok(()));
         assert!(!s.in_error());

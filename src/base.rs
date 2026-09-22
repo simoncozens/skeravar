@@ -77,7 +77,13 @@ impl Subset for Base<'_> {
                 &var_store,
                 s,
                 plan,
-                (&plan.base_varstore_inner_maps, false, true, true),
+                crate::variations::VarStoreSubsetArgs {
+                    inner_maps: &plan.base_varstore_inner_maps,
+                    keep_empty: false,
+                    optimize: true,
+                    use_no_variation_idx: true,
+                    remap_layout_varidx_map: false,
+                },
                 varstore_offset_pos,
             )
             .is_empty()

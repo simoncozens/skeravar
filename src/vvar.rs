@@ -75,12 +75,13 @@ impl<'a> Serialize<'a> for Vvar<'_> {
                 &var_store,
                 s,
                 plan,
-                (
-                    vvar_subset_plan.inner_maps(),
-                    true,
-                    index_maps[0].is_some(),
-                    false,
-                ),
+                crate::variations::VarStoreSubsetArgs {
+                    inner_maps: vvar_subset_plan.inner_maps(),
+                    keep_empty: true,
+                    optimize: index_maps[0].is_some(),
+                    use_no_variation_idx: false,
+                    remap_layout_varidx_map: false,
+                },
                 var_store_offset_pos,
             )?;
         }

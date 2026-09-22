@@ -99,12 +99,13 @@ fn subset_gdef(
                 &var_store,
                 s,
                 plan,
-                (
-                    &plan.gdef_varstore_inner_maps,
-                    keep_empty_for_instancing,
-                    true,
-                    true,
-                ),
+                crate::variations::VarStoreSubsetArgs {
+                    inner_maps: &plan.gdef_varstore_inner_maps,
+                    keep_empty: keep_empty_for_instancing,
+                    optimize: true,
+                    use_no_variation_idx: true,
+                    remap_layout_varidx_map: true,
+                },
                 var_store_offset_pos,
             ) {
                 Ok(()) => {

@@ -85,12 +85,13 @@ impl<'a> Serialize<'a> for Hvar<'_> {
                 &var_store,
                 s,
                 plan,
-                (
-                    hvar_subset_plan.inner_maps(),
-                    true,
-                    index_maps[0].is_some(),
-                    false,
-                ),
+                crate::variations::VarStoreSubsetArgs {
+                    inner_maps: hvar_subset_plan.inner_maps(),
+                    keep_empty: true,
+                    optimize: index_maps[0].is_some(),
+                    use_no_variation_idx: false,
+                    remap_layout_varidx_map: false,
+                },
                 var_store_offset_pos,
             )?;
         }
