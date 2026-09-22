@@ -210,7 +210,6 @@ fn feature_variation_collect_lookups_gpos(
 
     feature_variation_collect_lookups(
         &feature_variations,
-        gpos.offset_data(),
         feature_indices,
         feature_record_cond_idx_map,
         lookup_indices,

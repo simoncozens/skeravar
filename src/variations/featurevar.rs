@@ -95,13 +95,13 @@ impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
         }
 
         s.embed(self.version())?;
-        // Add 1 to count if we're inserting a catch-all record at the end
-        let total_records = if insert_catch_all {
-            num_retained_records + 1
-        } else {
-            num_retained_records
-        };
-        s.embed(total_records)?;
+        // `varRecords` is an `Array32Of<FeatureVariationRecord>`, so the count is
+        // the number of records actually written - not the pre-computed upper
+        // bound `num_retained_records`, since records whose conditions did not
+        // match are skipped below (and an optional catch-all record is appended).
+        // Patch the value in once we know how many records were emitted.
+        let record_count_pos = s.embed(0_u32)?;
+        let mut records_written: u32 = 0;
 
         let font_data = self.offset_data();
 
@@ -118,16 +118,21 @@ impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
                 s,
                 (font_data, feature_index_map, c, false),
             )?;
+            records_written += 1;
         }
 
         // Insert catch-all record at the end if needed
-        if insert_catch_all {
+        if insert_catch_all && records_written > 0 {
             c.cur_feature_var_record_idx = num_retained_records as u16;
             // Use the first variation record as a template, but serialize differently
-            if num_retained_records > 0 {
-                variation_records[0].subset(plan, s, (font_data, feature_index_map, c, true))?;
-            }
+            variation_records[0].subset(plan, s, (font_data, feature_index_map, c, true))?;
+            records_written += 1;
         }
+
+        if records_written == 0 {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+        }
+        s.copy_assign(record_count_pos, records_written);
         Ok(())
     }
 }
@@ -704,12 +709,15 @@ pub(crate) fn collect_lookups_with_substitutes(
 /// Collect lookups from feature variations whose conditions matched
 pub(crate) fn feature_variation_collect_lookups(
     feature_variations: &FeatureVariations,
-    font_data: FontData,
     feature_indices: &IntSet<u16>,
     feature_record_cond_idx_map: &FnvHashMap<u16, IntSet<u16>>,
     lookup_indices: &mut IntSet<u16>,
 ) -> Result<(), SubsetError> {
     let var_records = feature_variations.feature_variation_records();
+    // Offsets in each record are relative to the FeatureVariations table, not to
+    // the enclosing GSUB/GPOS table (matching HarfBuzz, which uses
+    // `varRecords[i].collect_lookups(this, ...)` with `this` = FeatureVariations).
+    let data = feature_variations.offset_data();
 
     for (record_idx, var_record) in var_records.iter().enumerate() {
         // Only process records whose conditions matched (are in the map)
@@ -718,7 +726,7 @@ pub(crate) fn feature_variation_collect_lookups(
         }
 
         if let Some(feature_subs) = var_record
-            .feature_table_substitution(font_data)
+            .feature_table_substitution(data)
             .transpose()
             .ok()
             .flatten()

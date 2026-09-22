@@ -212,7 +212,6 @@ fn feature_variation_collect_lookups_gsub(
 
     feature_variation_collect_lookups(
         &feature_variations,
-        gsub.offset_data(),
         feature_indices,
         feature_record_cond_idx_map,
         lookup_indices,
