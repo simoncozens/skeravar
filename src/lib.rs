@@ -52,7 +52,6 @@ use crate::{
     },
     glyf_loca::{ContourPoints, PHANTOM_POINT_COUNT},
     head::HeadMaxpInfo,
-    parsing_util::InstancingSpec,
     repack::resolve_overflows,
     variations::solver::{Triple, TripleDistances},
 };
@@ -65,7 +64,7 @@ use layout::{
 };
 pub use parsing_util::{
     parse_instancing_spec, parse_name_ids, parse_name_languages, parse_tag_list, parse_unicodes,
-    populate_gids,
+    populate_gids, AxisSpec, InstancingSpec,
 };
 use unicode_closure::unicode_closure;
 
@@ -86,7 +85,7 @@ use skrifa::{
 use thiserror::Error;
 use write_fonts::{
     read::{
-        collections::{int_set::Domain, IntSet},
+        collections::int_set::Domain,
         tables::{
             avar::Avar,
             base::Base,
@@ -122,10 +121,17 @@ use write_fonts::{
             vorg::Vorg,
             vvar::Vvar,
         },
-        types::{F2Dot14, GlyphId, NameId, Tag},
-        FontRef, TableProvider, TopLevelTable,
+        types::{F2Dot14, NameId},
+        TableProvider, TopLevelTable,
     },
     FontBuilder,
+};
+
+// Re-export any public types we depend upon
+pub use write_fonts::read::{
+    collections::IntSet,
+    types::{GlyphId, Tag},
+    FontRef,
 };
 
 const MAX_COMPOSITE_OPERATIONS_PER_GLYPH: u8 = 64;
