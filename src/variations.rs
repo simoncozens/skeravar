@@ -2017,7 +2017,7 @@ pub fn subset_itemvarstore_with_instancing(
     optimize: bool,
     use_no_variation_idx: bool,
 ) -> Result<(Vec<u8>, FnvHashMap<u32, u32>), SerializeErrorFlags> {
-    log::warn!(
+    log::debug!(
         "Instancing ItemVariationStore with location: {:?}",
         plan.axes_location
     );

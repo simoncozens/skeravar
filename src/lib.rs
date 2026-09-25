@@ -1904,7 +1904,7 @@ fn try_subset<'a>(
     table_len: u32,
     state: &mut SubsetState,
 ) -> Result<(), SubsetError> {
-    log::info!("Subsetting table {:?}", table_tag);
+    log::debug!("Subsetting table {:?}", table_tag);
 
     s.start_serialize()
         .map_err(|_| SubsetError::SubsetTableError(table_tag))?;
