@@ -735,15 +735,13 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
 
         // seq rulesets offsets
         let rule_sets = self.chained_class_seq_rule_sets();
-        let n = self
-            .chained_class_seq_rule_set_count()
-            .min(
-                cov_classes
-                    .last()
-                    .unwrap()
-                    .saturating_add(1)
-                    .min(u16::MAX as u32) as u16,
-            );
+        let n = self.chained_class_seq_rule_set_count().min(
+            cov_classes
+                .last()
+                .unwrap()
+                .saturating_add(1)
+                .min(u16::MAX as u32) as u16,
+        );
 
         let mut snap = s.snapshot();
         let subset_struct = ChainedContextSubsetStruct {
