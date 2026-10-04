@@ -524,14 +524,14 @@ impl CollectVariationIndices for PairPosFormat2<'_> {
             // run past the end of the record matrix in a malformed font. The
             // sets are iterated in ascending order, so we can stop at the
             // first out-of-range value, matching HarfBuzz.
-            if class1 >= class1_count {
+            if class1 >= u32::from(class1_count) {
                 break;
             }
             for class2 in class2_set.iter() {
-                if class2 >= class2_count {
+                if class2 >= u32::from(class2_count) {
                     break;
                 }
-                let Some([rec1, rec2]) = class_records.get(class1, class2) else {
+                let Some([rec1, rec2]) = class_records.get(class1 as u16, class2 as u16) else {
                     continue;
                 };
                 rec1.collect_variation_indices(plan, varidx_set);

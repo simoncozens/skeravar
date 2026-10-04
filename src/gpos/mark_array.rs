@@ -81,7 +81,7 @@ pub(crate) fn collect_retained_mark_varidx_and_classes(
 }
 
 impl<'a> SubsetTable<'a> for MarkArray<'_> {
-    type ArgsForSubset = (&'a IntSet<u16>, &'a FastHashMap<u16, u16>);
+    type ArgsForSubset = (&'a IntSet<u32>, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,

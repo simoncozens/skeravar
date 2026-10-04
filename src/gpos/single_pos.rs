@@ -233,7 +233,7 @@ impl<'a> Serialize<'a> for SinglePosFormat2<'_> {
         &'a [GlyphId],
         ValueFormat,
         &'a SinglePosFormat2<'a>,
-        &'a [u16],
+        &'a [u32],
         &'a Plan,
     );
     fn serialize(s: &mut Serializer, args: Self::Args) -> Result<(), SerializeErrorFlags> {

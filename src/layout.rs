@@ -227,6 +227,9 @@ impl<'a> SubsetTable<'a> for ClassDef<'a> {
         match self {
             Self::Format1(item) => item.subset(plan, s, args),
             Self::Format2(item) => item.subset(plan, s, args),
+            Self::Format3(_) | Self::Format4(_) => {
+                Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER))
+            }
         }
     }
 }
@@ -598,6 +601,9 @@ impl<'a> SubsetTable<'a> for CoverageTable<'a> {
         match self {
             CoverageTable::Format1(sub) => sub.subset(plan, s, args),
             CoverageTable::Format2(sub) => sub.subset(plan, s, args),
+            Self::Format3(_) | Self::Format4(_) => {
+                Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER))
+            }
         }
     }
 }
@@ -823,10 +829,10 @@ pub(crate) fn for_each_intersected_glyph_and_index<E>(
     coverage: &CoverageTable,
     glyph_set: &IntSet<GlyphId>,
     glyph_map: &[GlyphId],
-    array_len: u16,
-    f: impl FnMut(u16, GlyphId) -> Result<(), E>,
+    array_len: impl Into<u32>,
+    f: impl FnMut(u32, GlyphId) -> Result<(), E>,
 ) -> Result<(), E> {
-    for_each_intersection(coverage, glyph_set, Some(glyph_map), array_len, f)
+    for_each_intersection(coverage, glyph_set, Some(glyph_map), array_len.into(), f)
 }
 
 /// Call `f(coverage_index)` for each glyph in the input Coverage table that is
@@ -840,10 +846,10 @@ pub(crate) fn for_each_intersected_glyph_and_index<E>(
 pub(crate) fn for_each_intersected_coverage_index<E>(
     coverage: &CoverageTable,
     glyph_set: &IntSet<GlyphId>,
-    array_len: u16,
-    mut f: impl FnMut(u16) -> Result<(), E>,
+    array_len: impl Into<u32>,
+    mut f: impl FnMut(u32) -> Result<(), E>,
 ) -> Result<(), E> {
-    for_each_intersection(coverage, glyph_set, None, array_len, |idx, _| f(idx))
+    for_each_intersection(coverage, glyph_set, None, array_len.into(), |idx, _| f(idx))
 }
 
 /// Shared implementation of the two functions above. With `glyph_map` set,
@@ -854,8 +860,8 @@ fn for_each_intersection<E>(
     coverage: &CoverageTable,
     glyph_set: &IntSet<GlyphId>,
     glyph_map: Option<&[GlyphId]>,
-    array_len: u16,
-    mut f: impl FnMut(u16, GlyphId) -> Result<(), E>,
+    array_len: u32,
+    mut f: impl FnMut(u32, GlyphId) -> Result<(), E>,
 ) -> Result<(), E> {
     let num_bits = coverage.cost();
     let coverage_population = coverage.population();
@@ -891,7 +897,7 @@ fn for_each_intersection<E>(
                 None if glyph_set.contains(g) => g,
                 None => continue,
             };
-            f(i as u16, g)?;
+            f(i as u32, g)?;
         }
     }
     Ok(())
@@ -906,8 +912,9 @@ pub(crate) fn intersected_glyphs_and_indices(
     coverage: &CoverageTable,
     glyph_set: &IntSet<GlyphId>,
     glyph_map: &[GlyphId],
-    array_len: u16,
-) -> (Vec<GlyphId>, IntSet<u16>) {
+    array_len: impl Into<u32>,
+) -> (Vec<GlyphId>, IntSet<u32>) {
+    let array_len = array_len.into();
     let cap = coverage
         .population()
         .min(glyph_set.len() as usize)
