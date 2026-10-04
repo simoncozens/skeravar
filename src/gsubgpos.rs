@@ -33,6 +33,9 @@ impl<'a> SubsetTable<'a> for SequenceContext<'_> {
             Self::Format1(item) => item.subset(plan, s, lookup_map),
             Self::Format2(item) => item.subset(plan, s, lookup_map),
             Self::Format3(item) => item.subset(plan, s, lookup_map),
+            Self::Format4(_) | Self::Format5(_) | Self::Format6(_) => {
+                Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER))
+            }
         }
     }
 }
@@ -465,6 +468,9 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContext<'_> {
             Self::Format1(item) => item.subset(plan, s, lookup_map),
             Self::Format2(item) => item.subset(plan, s, lookup_map),
             Self::Format3(item) => item.subset(plan, s, lookup_map),
+            Self::Format4(_) | Self::Format5(_) => {
+                Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER))
+            }
         }
     }
 }
