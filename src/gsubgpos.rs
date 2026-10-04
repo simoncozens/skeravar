@@ -152,14 +152,16 @@ fn serialize_glyph_sequence(
 
 fn serialize_class_sequence(
     sequence: &[BigEndian<u16>],
-    class_map: &FastHashMap<u16, u16>,
+    class_map: &ClassMap,
     s: &mut Serializer,
 ) -> Result<(), SerializeErrorFlags> {
     for c in sequence {
         let new_c = class_map
-            .get(&c.get())
+            .get(&u32::from(c.get()))
             .ok_or(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY)?;
-        s.embed(*new_c)?;
+        let new_c = u16::try_from(*new_c)
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW))?;
+        s.embed(new_c)?;
     }
     Ok(())
 }
@@ -293,7 +295,10 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat2<'_> {
             .class_seq_rule_set_count()
             .min(last_cov_class.saturating_add(1).min(u16::MAX as u32) as u16);
         let mut snap = s.snapshot();
-        for (i, c) in (0..n).filter(|c| class_map.contains_key(c)).enumerate() {
+        for (i, c) in (0..n)
+            .filter(|c| class_map.contains_key(&u32::from(*c)))
+            .enumerate()
+        {
             let offset_pos = s.allocate_size(Offset16::RAW_BYTE_LEN, true)?;
             if !cov_classes.contains(u32::from(c)) {
                 continue;
@@ -332,7 +337,7 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat2<'_> {
 }
 
 impl<'a> SubsetTable<'a> for ClassSequenceRuleSet<'_> {
-    type ArgsForSubset = (&'a FastHashMap<u16, u16>, &'a FastHashMap<u16, u16>);
+    type ArgsForSubset = (&'a ClassMap, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,
@@ -370,7 +375,7 @@ impl<'a> SubsetTable<'a> for ClassSequenceRuleSet<'_> {
 }
 
 impl<'a> SubsetTable<'a> for ClassSequenceRule<'_> {
-    type ArgsForSubset = (&'a FastHashMap<u16, u16>, &'a FastHashMap<u16, u16>);
+    type ArgsForSubset = (&'a ClassMap, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,
@@ -742,7 +747,7 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
             lookahead_class_map: &lookahead_class_map,
         };
         for (i, c) in (0..n)
-            .filter(|c| input_class_map.contains_key(c))
+            .filter(|c| input_class_map.contains_key(&u32::from(*c)))
             .enumerate()
         {
             let offset_pos = s.allocate_size(Offset16::RAW_BYTE_LEN, true)?;
@@ -778,9 +783,9 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
 
 pub(crate) struct ChainedContextSubsetStruct<'a> {
     lookup_map: &'a FastHashMap<u16, u16>,
-    backtrack_class_map: &'a FastHashMap<u16, u16>,
-    input_class_map: &'a FastHashMap<u16, u16>,
-    lookahead_class_map: &'a FastHashMap<u16, u16>,
+    backtrack_class_map: &'a ClassMap,
+    input_class_map: &'a ClassMap,
+    lookahead_class_map: &'a ClassMap,
 }
 impl<'a> SubsetTable<'a> for ChainedClassSequenceRuleSet<'_> {
     type ArgsForSubset = &'a ChainedContextSubsetStruct<'a>;

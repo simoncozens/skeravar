@@ -318,7 +318,8 @@ impl<'a> SubsetTable<'a> for PairPosFormat2<'_> {
         if class1_map.is_empty() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
-        let class1_count = class1_map.len() as u16;
+        let class1_count = u16::try_from(class1_map.len())
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW))?;
 
         // classdef2 offset
         let classdef2_offset_pos = s.embed(0_u16)?;
@@ -346,7 +347,8 @@ impl<'a> SubsetTable<'a> for PairPosFormat2<'_> {
         if class2_map.len() <= 1 {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
-        let class2_count = class2_map.len() as u16;
+        let class2_count = u16::try_from(class2_map.len())
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW))?;
 
         // class1_count
         s.embed(class1_count)?;
@@ -356,10 +358,10 @@ impl<'a> SubsetTable<'a> for PairPosFormat2<'_> {
         // value formats
         let (subset_state, font) = args;
         let class1_idxes: Vec<u16> = (0..self.class1_count())
-            .filter(|i| class1_map.contains_key(i))
+            .filter(|i| class1_map.contains_key(&u32::from(*i)))
             .collect();
         let class2_idxes: Vec<u16> = (0..self.class2_count())
-            .filter(|i| class2_map.contains_key(i))
+            .filter(|i| class2_map.contains_key(&u32::from(*i)))
             .collect();
 
         let (new_format1, new_format2) = if !plan.normalized_coords.is_empty() {
