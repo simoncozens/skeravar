@@ -1105,6 +1105,29 @@ impl Plan {
         if !self.drop_tables.contains(Tag::new(b"GPOS")) {
             if let Ok(gpos) = font.gpos() {
                 gpos.collect_variation_indices(self, &mut varidx_set);
+                if let Some(Ok(variations)) = gpos.feature_variations() {
+                    layout::collect_feature_variation_condition_indices(
+                        &variations,
+                        self,
+                        &self.gpos_features_w_duplicates,
+                        &self.gpos_lookups,
+                        &mut varidx_set,
+                    );
+                }
+            }
+        }
+        if !self.drop_tables.contains(Tag::new(b"GSUB")) {
+            if let Ok(gsub) = font.gsub() {
+                gsub.collect_variation_indices(self, &mut varidx_set);
+                if let Some(Ok(variations)) = gsub.feature_variations() {
+                    layout::collect_feature_variation_condition_indices(
+                        &variations,
+                        self,
+                        &self.gsub_features_w_duplicates,
+                        &self.gsub_lookups,
+                        &mut varidx_set,
+                    );
+                }
             }
         }
 

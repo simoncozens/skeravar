@@ -1,6 +1,8 @@
 //! impl subset() for layout common tables
 
 mod classdef;
+mod condition;
+pub(crate) use condition::collect_feature_variation_condition_indices;
 mod extended;
 pub(crate) mod header;
 mod lookup_variations;
@@ -1386,559 +1388,175 @@ macro_rules! subset_lookup_list {
 subset_lookup_list!(LookupList);
 subset_lookup_list!(LookupList2);
 
-impl<'a, T> SubsetTable<'a> for ArrayOfOffsets<'a, T, Offset16>
-where
-    T: SubsetTable<
-            'a,
-            ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>),
-        > + Intersect
-        + FontRead<'a, Args = ()>
-        + 'a,
-{
-    type ArgsForSubset = T::ArgsForSubset;
-    type Output = u16;
+impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
+    type ArgsForSubset = &'a mut SubsetLayoutContext;
+    type Output = ();
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        c: &mut SubsetLayoutContext,
+    ) -> Result<(), SerializeErrorFlags> {
+        let feature_index_map = if c.table_tag == Gsub::TAG {
+            &plan.gsub_features_w_duplicates
+        } else {
+            &plan.gpos_features_w_duplicates
+        };
+        let num_retained_records = num_variation_record_to_retain(self, feature_index_map)
+            .map_err(|error| s.set_err(error))?;
+        if num_retained_records == 0 {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+        }
+
+        s.embed(self.version())?;
+        s.embed(num_retained_records)?;
+
+        let font_data = self.offset_data();
+
+        let variation_records = self.feature_variation_records();
+        for i in 0..num_retained_records {
+            variation_records[i as usize].subset(plan, s, (font_data, feature_index_map, c))?;
+        }
+        Ok(())
+    }
+}
+
+// Prune empty records at the end only
+// ref: <https://github.com/fonttools/fonttools/blob/3c1822544d608f87c41fc8fb9ba41ea129257aa8/Lib/fontTools/subset/__init__.py#L1782>
+fn num_variation_record_to_retain(
+    feature_variations: &FeatureVariations,
+    feature_index_map: &FastHashMap<u16, u16>,
+) -> Result<u32, SerializeErrorFlags> {
+    let num_records = feature_variations.feature_variation_record_count();
+    if u64::from(num_records) * 8 > feature_variations.offset_data().len().saturating_sub(8) as u64
+    {
+        return Err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR);
+    }
+    let variation_records = feature_variations.feature_variation_records();
+    let font_data = feature_variations.offset_data();
+
+    for i in (0..num_records).rev() {
+        let Some(feature_substitution) = variation_records[i as usize]
+            .feature_table_substitution(font_data)
+            .transpose()
+            .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
+        else {
+            continue;
+        };
+
+        if feature_substitution
+            .substitutions()
+            .iter()
+            .any(|subs| feature_index_map.contains_key(&subs.feature_index()))
+        {
+            return Ok(i + 1);
+        }
+    }
+    Ok(0)
+}
+
+impl<'a> SubsetTable<'a> for FeatureVariationRecord {
+    type ArgsForSubset = (
+        FontData<'a>,
+        &'a FastHashMap<u16, u16>,
+        &'a mut SubsetLayoutContext,
+    );
+    type Output = ();
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
         args: Self::ArgsForSubset,
     ) -> Result<Self::Output, SerializeErrorFlags> {
-        let mut count = 0_u16;
-        for sub in self.iter().filter_map(|table| match table {
-            Err(ReadError::NullOffset) => None,
-            other => Some(other),
-        }) {
-            let sub =
-                sub.map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
-            if !sub
-                .intersects(&plan.glyphset_gsub)
-                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
-            {
-                continue;
-            }
-            let snap = s.snapshot();
-            let offset_pos = s.embed(0_u16)?;
-            match Offset16::serialize_subset(&sub, s, plan, args, offset_pos) {
-                Ok(_) => count += 1,
-                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => s.revert_snapshot(snap),
-                Err(e) => {
-                    s.revert_snapshot(snap);
-                    return Err(e);
-                }
-            }
+        let (font_data, feature_index_map, c) = args;
+        let condition_set_offset_pos = s.embed(0_u32)?;
+        if let Some(condition_set) = self
+            .condition_set(font_data)
+            .transpose()
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
+        {
+            Offset32::serialize_subset(&condition_set, s, plan, (), condition_set_offset_pos)?;
         }
-        Ok(count)
+
+        let feature_substitutions_offset_pos = s.embed(0_u32)?;
+        if let Some(feature_subs) = self
+            .feature_table_substitution(font_data)
+            .transpose()
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
+        {
+            Offset32::serialize_subset(
+                &feature_subs,
+                s,
+                plan,
+                (feature_index_map, c),
+                feature_substitutions_offset_pos,
+            )?;
+        }
+
+        Ok(())
     }
 }
 
-impl<
-        'a,
-        T: FontRead<'a, Args = ()>
-            + SubsetTable<
-                'a,
-                ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>),
-            >,
-    > SubsetTable<'a> for read_fonts::tables::layout::LookupListTable<'a, T>
-{
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
+impl<'a> SubsetTable<'a> for FeatureTableSubstitution<'_> {
+    type ArgsForSubset = (&'a FastHashMap<u16, u16>, &'a mut SubsetLayoutContext);
     type Output = ();
-
     fn subset(
         &self,
         plan: &Plan,
         s: &mut Serializer,
         args: Self::ArgsForSubset,
-    ) -> Result<(), SerializeErrorFlags> {
-        match self {
-            Self::Offset16(t) => t.subset(plan, s, args),
-            Self::Offset32(t) => t.subset(plan, s, args),
+    ) -> Result<Self::Output, SerializeErrorFlags> {
+        s.embed(self.version())?;
+
+        // substitution count
+        let subs_count_pos = s.embed(0_u16)?;
+        let mut subs_count = 0_u16;
+
+        let (feature_index_map, c) = args;
+        let font_data = self.offset_data();
+        for sub in self.substitutions() {
+            if !sub
+                .subset(plan, s, (feature_index_map, c, font_data))
+                .is_empty()?
+            {
+                subs_count += 1;
+            }
         }
+
+        if subs_count != 0 {
+            s.copy_assign(subs_count_pos, subs_count);
+        }
+        Ok(())
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use read_fonts::{
-        tables::gpos::{PairPos, PositionSubtables},
-        types::GlyphId,
-        FontRef, TableProvider,
-    };
-
-    #[test]
-    fn test_subset_gpos_classdefs() {
-        let font = FontRef::new(include_bytes!("../test-data/fonts/AdobeVFPrototype.otf")).unwrap();
-        let gpos = font.gpos().unwrap();
-        let gpos_lookup = gpos.lookup_list().unwrap().lookups().get(0).unwrap();
-
-        let Ok(PositionSubtables::Pair(subtables)) = gpos_lookup.subtables() else {
-            panic!("invalid lookup!")
-        };
-        let Ok(PairPos::Format2(pair_pos2)) = subtables.get(1) else {
-            panic!("invalid lookup!")
-        };
-
-        let class_def1 = pair_pos2.class_def1().unwrap();
-        let class_def2 = pair_pos2.class_def2().unwrap();
-        let coverage = pair_pos2.coverage().unwrap();
-
-        let mut plan = Plan::default();
-        plan.glyphset_gsub.insert(GlyphId::NOTDEF);
-        plan.glyphset_gsub.insert(GlyphId::from(34_u32));
-        plan.glyphset_gsub.insert(GlyphId::from(35_u32));
-
-        plan.glyph_map_gsub = vec![INVALID_GID; 36];
-        plan.glyph_map_gsub[0] = GlyphId::NOTDEF;
-        plan.glyph_map_gsub[34] = GlyphId::from(1_u32);
-        plan.glyph_map_gsub[35] = GlyphId::from(2_u32);
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        //test ClassDef1: remap_class: true, keep_empty_table: true, use_class_zero: true, use glyph_filter:Some(&Coverage)
-        let ret = class_def1.subset(
-            &plan,
-            &mut s,
-            &ClassDefSubsetStruct {
-                remap_class: true,
-                keep_empty_table: true,
-                use_class_zero: true,
-                glyph_filter: Some(&coverage),
-            },
-        );
-        assert!(ret.is_ok());
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_bytes: [u8; 8] = [0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01];
-        assert_eq!(subsetted_data, expected_bytes);
-
-        let ret_hashmap = ret.unwrap().unwrap();
-        assert_eq!(ret_hashmap.len(), 2);
-        assert_eq!(ret_hashmap.get(&2), Some(&0));
-        assert_eq!(ret_hashmap.get(&44), Some(&1));
-
-        // test subset ClassDef2:
-        // remap_class: true, keep_empty_table: true, use_class_zero: false, no glyph_filter: None
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        let ret = class_def2.subset(
-            &plan,
-            &mut s,
-            &ClassDefSubsetStruct {
-                remap_class: true,
-                keep_empty_table: true,
-                use_class_zero: false,
-                glyph_filter: None,
-            },
-        );
-        assert!(ret.is_ok());
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_bytes: [u8; 10] = [0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x01];
-        assert_eq!(subsetted_data, expected_bytes);
-
-        let ret_hashmap = ret.unwrap().unwrap();
-        assert_eq!(ret_hashmap.len(), 3);
-        assert_eq!(ret_hashmap.get(&0), Some(&0));
-        assert_eq!(ret_hashmap.get(&1), Some(&1));
-        assert_eq!(ret_hashmap.get(&5), Some(&2));
-    }
-
-    // An empty ClassDefFormat1 assigns class 0 to every glyph. Subsetting one
-    // with start_glyph_id == 0 used to overflow computing the end glyph.
-    // <https://github.com/googlefonts/fontations/issues/2142>
-    #[test]
-    fn test_subset_empty_classdef1() {
-        use read_fonts::{tables::layout::ClassDefFormat1, FontData, FontRead};
-
-        let mut plan = Plan::default();
-        plan.glyphset_gsub.insert(GlyphId::NOTDEF);
-        plan.glyphset_gsub.insert(GlyphId::from(1_u32));
-        plan.glyph_map_gsub = vec![INVALID_GID; 2];
-        plan.glyph_map_gsub[0] = GlyphId::NOTDEF;
-        plan.glyph_map_gsub[1] = GlyphId::from(1_u32);
-
-        // format = 1, start_glyph_id, glyph_count = 0. A zero start glyph is
-        // the case that overflowed; a non-zero one must behave the same.
-        for start_glyph in [0u8, 60] {
-            let bytes: [u8; 6] = [0, 1, 0, start_glyph, 0, 0];
-            let class_def = ClassDefFormat1::read(FontData::new(&bytes)).unwrap();
-
-            let mut s = Serializer::new(1024);
-            assert_eq!(s.start_serialize(), Ok(()));
-            let ret = class_def.subset(
-                &plan,
-                &mut s,
-                &ClassDefSubsetStruct {
-                    remap_class: true,
-                    keep_empty_table: true,
-                    use_class_zero: true,
-                    glyph_filter: None,
-                },
-            );
-            assert!(ret.is_ok(), "start_glyph {start_glyph}");
-            assert!(!s.in_error(), "start_glyph {start_glyph}");
-            s.end_serialize();
-
-            // no glyph has a non-zero class, so the output is an empty ClassDef
-            let subsetted_data = s.copy_bytes();
-            let expected_bytes: [u8; 4] = [0x00, 0x02, 0x00, 0x00];
-            assert_eq!(subsetted_data, expected_bytes, "start_glyph {start_glyph}");
-
-            // and it is reported as empty when the caller doesn't want empties
-            let mut s = Serializer::new(1024);
-            assert_eq!(s.start_serialize(), Ok(()));
-            let ret = class_def.subset(
-                &plan,
-                &mut s,
-                &ClassDefSubsetStruct {
-                    remap_class: true,
-                    keep_empty_table: false,
-                    use_class_zero: true,
-                    glyph_filter: None,
-                },
-            );
-            assert_eq!(
-                ret.err(),
-                Some(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY),
-                "start_glyph {start_glyph}"
-            );
+impl<'a> SubsetTable<'a> for FeatureTableSubstitutionRecord {
+    type ArgsForSubset = (
+        &'a FastHashMap<u16, u16>,
+        &'a mut SubsetLayoutContext,
+        FontData<'a>,
+    );
+    type Output = ();
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        args: Self::ArgsForSubset,
+    ) -> Result<Self::Output, SerializeErrorFlags> {
+        if self.alternate_feature_offset().is_null() {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
-    }
-
-    #[test]
-    fn test_subset_gdef_glyph_classdef() {
-        let font = FontRef::new(include_bytes!(
-            "../test-data/fonts/IndicTestHowrah-Regular.ttf"
-        ))
-        .unwrap();
-        let gdef = font.gdef().unwrap();
-        let glyph_class_def = gdef.glyph_class_def().unwrap().unwrap();
-
-        let mut plan = Plan::default();
-        plan.glyphset_gsub.insert(GlyphId::NOTDEF);
-        plan.glyphset_gsub.insert(GlyphId::from(68_u32));
-
-        plan.glyph_map_gsub = vec![INVALID_GID; 69];
-        plan.glyph_map_gsub[0] = GlyphId::NOTDEF;
-        plan.glyph_map_gsub[68] = GlyphId::from(1_u32);
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        //remap_class: false, keep_empty_table: false, use_class_zero: true, no glyph_filter:None
-        let ret = glyph_class_def.subset(
-            &plan,
-            &mut s,
-            &ClassDefSubsetStruct {
-                remap_class: false,
-                keep_empty_table: false,
-                use_class_zero: true,
-                glyph_filter: None,
-            },
-        );
-        assert!(ret.is_ok());
-        assert!(ret.unwrap().is_none());
-
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_bytes: [u8; 8] = [0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01];
-        assert_eq!(subsetted_data, expected_bytes);
-    }
-
-    #[test]
-    fn test_subset_coverage_format2_to_format1() {
-        let font = FontRef::new(include_bytes!(
-            "../test-data/fonts/IndicTestHowrah-Regular.ttf"
-        ))
-        .unwrap();
-        let gdef = font.gdef().unwrap();
-        let attach_list = gdef.attach_list().unwrap().unwrap();
-        let coverage = attach_list.coverage().unwrap();
-
-        let mut plan = Plan {
-            font_num_glyphs: 611,
-            ..Default::default()
-        };
-        plan.glyphset_gsub.insert(GlyphId::NOTDEF);
-        plan.glyphset_gsub.insert(GlyphId::from(68_u32));
-
-        plan.glyph_map_gsub = vec![INVALID_GID; 69];
-        plan.glyph_map_gsub[0] = GlyphId::NOTDEF;
-        plan.glyph_map_gsub[68] = GlyphId::from(3_u32);
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        let ret = coverage.subset(&plan, &mut s, ());
-        assert!(ret.is_ok());
-
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_bytes: [u8; 6] = [0x00, 0x01, 0x00, 0x01, 0x00, 0x03];
-        assert_eq!(subsetted_data, expected_bytes);
-    }
-
-    #[test]
-    fn test_subset_coverage_format1() {
-        let font = FontRef::new(include_bytes!("../test-data/fonts/AdobeVFPrototype.otf")).unwrap();
-        let gpos = font.gpos().unwrap();
-        let gpos_lookup = gpos.lookup_list().unwrap().lookups().get(0).unwrap();
-
-        let Ok(PositionSubtables::Pair(subtables)) = gpos_lookup.subtables() else {
-            panic!("invalid lookup!")
-        };
-        let Ok(PairPos::Format1(pair_pos1)) = subtables.get(0) else {
-            panic!("invalid lookup!")
+        let (feature_index_map, c, font_data) = args;
+        let Some(new_feature_index) = feature_index_map.get(&self.feature_index()) else {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         };
 
-        let coverage = pair_pos1.coverage().unwrap();
+        let alternate_feature = self
+            .alternate_feature(font_data)
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
+        s.embed(*new_feature_index)?;
 
-        let mut plan = Plan {
-            font_num_glyphs: 313,
-            ..Default::default()
-        };
-        plan.glyphset_gsub.insert(GlyphId::NOTDEF);
-        plan.glyphset_gsub.insert(GlyphId::from(34_u32));
-        plan.glyphset_gsub.insert(GlyphId::from(35_u32));
-        plan.glyphset_gsub.insert(GlyphId::from(36_u32));
-        plan.glyphset_gsub.insert(GlyphId::from(56_u32));
-
-        plan.glyph_map_gsub = vec![INVALID_GID; 57];
-        plan.glyph_map_gsub[0] = GlyphId::NOTDEF;
-        plan.glyph_map_gsub[34] = GlyphId::from(1_u32);
-        plan.glyph_map_gsub[35] = GlyphId::from(2_u32);
-        plan.glyph_map_gsub[36] = GlyphId::from(3_u32);
-        plan.glyph_map_gsub[56] = GlyphId::from(4_u32);
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        let ret = coverage.subset(&plan, &mut s, ());
-        assert!(ret.is_ok());
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_bytes: [u8; 8] = [0x00, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x04];
-        assert_eq!(subsetted_data, expected_bytes);
-    }
-
-    #[test]
-    fn test_singlepos_closure_lookups() {
-        let font = FontRef::new(include_bytes!(
-            "../test-data/fonts/gpos_chaining1_multiple_subrules_f1.otf"
-        ))
-        .unwrap();
-        let gpos_lookup_list = font.gpos().unwrap().lookup_list().unwrap();
-        let mut lookup_indices = IntSet::empty();
-        lookup_indices.insert(1_u16);
-
-        let mut glyphs = IntSet::empty();
-        // glyphs set doesn't intersect with any subtable in lookup index=1, lookup_indices set will be emptied
-        glyphs.insert(GlyphId::from(3_u32));
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert!(lookup_indices.is_empty());
-
-        //reset
-        lookup_indices.insert(1);
-        glyphs.clear();
-
-        // make glyphs intersect with lookup index=1
-        glyphs.insert(GlyphId::from(48_u32));
-
-        // no new lookup indices are added, lookup_indices set remains the same
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert_eq!(lookup_indices.len(), 1);
-        assert!(lookup_indices.contains(1_u16));
-    }
-
-    #[test]
-    fn test_context_format1_closure_lookups() {
-        let font = FontRef::new(include_bytes!(
-            "../test-data/fonts/gpos_chaining1_multiple_subrules_f1.otf"
-        ))
-        .unwrap();
-        let gpos_lookup_list = font.gpos().unwrap().lookup_list().unwrap();
-        let mut lookup_indices = IntSet::empty();
-        lookup_indices.insert(4_u16);
-
-        let mut glyphs = IntSet::empty();
-        // glyphs set doesn't intersect with any subtable in lookup index=4, lookup_indices set will be emptied
-        glyphs.insert(GlyphId::from(3_u32));
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert!(lookup_indices.is_empty());
-
-        //reset
-        lookup_indices.insert(4);
-        glyphs.clear();
-
-        // make glyphs intersect with subtable index=1
-        // input coverage glyph
-        glyphs.insert(GlyphId::from(49_u32));
-        // backtrack glyph
-        glyphs.insert(GlyphId::from(48_u32));
-        // input glyph
-        glyphs.insert(GlyphId::from(50_u32));
-        // lookahead glyph
-        glyphs.insert(GlyphId::from(51_u32));
-
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert_eq!(lookup_indices.len(), 2);
-        assert!(lookup_indices.contains(4_u16));
-        assert!(lookup_indices.contains(1_u16));
-    }
-
-    #[test]
-    fn test_context_format2_closure_lookups() {
-        let font = FontRef::new(include_bytes!(
-            "../test-data/fonts/gpos_chaining2_multiple_subrules_f1.otf"
-        ))
-        .unwrap();
-        let gpos_lookup_list = font.gpos().unwrap().lookup_list().unwrap();
-        let mut lookup_indices = IntSet::empty();
-        lookup_indices.insert(4_u16);
-
-        let mut glyphs = IntSet::empty();
-        // glyphs set doesn't intersect with any subtable in lookup index=4, lookup_indices set will be emptied
-        glyphs.insert(GlyphId::from(47_u32));
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert!(lookup_indices.is_empty());
-
-        //reset
-        lookup_indices.insert(4);
-        glyphs.clear();
-
-        // make glyphs intersect with subtable index=1
-        // input coverage glyph
-        glyphs.insert(GlyphId::from(49_u32));
-        glyphs.insert(GlyphId::from(50_u32));
-        // backtrack glyph
-        glyphs.insert(GlyphId::from(48_u32));
-        // lookahead glyph
-        glyphs.insert(GlyphId::from(51_u32));
-        glyphs.insert(GlyphId::from(52_u32));
-
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert_eq!(lookup_indices.len(), 2);
-        assert!(lookup_indices.contains(4_u16));
-        assert!(lookup_indices.contains(1_u16));
-    }
-
-    #[test]
-    fn test_context_format3_closure_lookups() {
-        let font = FontRef::new(include_bytes!("../test-data/fonts/Amiri-Regular.ttf")).unwrap();
-        let gpos_lookup_list = font.gpos().unwrap().lookup_list().unwrap();
-        let mut lookup_indices = IntSet::empty();
-        lookup_indices.insert(2_u16);
-
-        let mut glyphs = IntSet::empty();
-        // glyphs set doesn't intersect with any subtable in lookup index=2, lookup_indices set will be emptied
-        glyphs.insert(GlyphId::from(3_u32));
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert!(lookup_indices.is_empty());
-
-        //reset
-        lookup_indices.insert(2);
-        glyphs.clear();
-
-        // make glyphs intersect with subtable index=0
-        // input glyph
-        glyphs.insert(GlyphId::from(6053_u32));
-        // lookahead glyph
-        glyphs.insert(GlyphId::from(580_u32));
-
-        // make glyphs intersect with subtable index=2
-        // input glyph
-        glyphs.insert(GlyphId::from(2033_u32));
-        // lookahead glyph
-        glyphs.insert(GlyphId::from(435_u32));
-
-        assert!(gpos_lookup_list
-            .closure_lookups(&glyphs, &mut lookup_indices)
-            .is_ok());
-        assert_eq!(lookup_indices.len(), 3);
-        assert!(lookup_indices.contains(3_u16));
-        assert!(lookup_indices.contains(4_u16));
-    }
-
-    #[test]
-    fn test_subset_script_list() {
-        use read_fonts::tables::gpos::Gpos;
-        let font = FontRef::new(include_bytes!("../test-data/fonts/Amiri-Regular.ttf")).unwrap();
-        let gpos_script_list = font.gpos().unwrap().script_list().unwrap();
-
-        let mut plan = Plan::default();
-        plan.gpos_features_w_duplicates.insert(0_u16, 0_u16);
-        plan.gpos_features_w_duplicates.insert(2_u16, 1_u16);
-
-        plan.layout_scripts.invert();
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-
-        let mut c = SubsetLayoutContext::new(Gpos::TAG);
-        gpos_script_list.subset(&plan, &mut s, &mut c).unwrap();
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_data: [u8; 58] = [
-            0x00, 0x03, 0x44, 0x46, 0x4c, 0x54, 0x00, 0x2c, 0x61, 0x72, 0x61, 0x62, 0x00, 0x20,
-            0x6c, 0x61, 0x74, 0x6e, 0x00, 0x14, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
-            0x00, 0x01, 0x00, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x02, 0x00, 0x00,
-            0x00, 0x01,
-        ];
-
-        assert_eq!(subsetted_data, expected_data);
-    }
-
-    #[test]
-    fn test_subset_feature_list() {
-        use read_fonts::tables::gpos::Gpos;
-        let font = FontRef::new(include_bytes!("../test-data/fonts/Amiri-Regular.ttf")).unwrap();
-        let gpos_feature_list = font.gpos().unwrap().feature_list().unwrap();
-
-        let mut plan = Plan::default();
-        plan.gpos_features.insert(0_u16, 0_u16);
-        plan.gpos_features.insert(2_u16, 1_u16);
-
-        plan.gpos_lookups.insert(82, 1);
-        plan.gpos_lookups.insert(57, 0);
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-
-        let mut c = SubsetLayoutContext::new(Gpos::TAG);
-        gpos_feature_list.subset(&plan, &mut s, &mut c).unwrap();
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        let subsetted_data = s.copy_bytes();
-        let expected_data: [u8; 26] = [
-            0x00, 0x02, 0x63, 0x75, 0x72, 0x73, 0x00, 0x14, 0x6b, 0x65, 0x72, 0x6e, 0x00, 0x0e,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-        ];
-
-        assert_eq!(subsetted_data, expected_data);
+        let feature_offset_pos = s.embed(0_u32)?;
+        Offset32::serialize_subset(&alternate_feature, s, plan, c, feature_offset_pos)
     }
 }
