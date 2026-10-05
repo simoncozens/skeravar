@@ -1,11 +1,12 @@
 //! impl subset() for ReverseChainSingleSubst subtable
 mod extended;
 
+use crate::FastHashMap;
 use crate::{
     layout::map_gsub_glyph,
     offset::SerializeSerialize,
     serialize::{SerializeErrorFlags, Serializer},
-    FastHashMap, Plan, SubsetState, SubsetTable,
+    Plan, SubsetState, SubsetTable,
 };
 use read_fonts::{
     tables::{gsub::ReverseChainSingleSubstFormat1, layout::CoverageTable},

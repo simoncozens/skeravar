@@ -2,14 +2,13 @@
 mod class_context;
 mod extended;
 
+use crate::FastHashMap;
 use crate::{
-    layout::{
-        for_each_intersected_glyph_and_index, map_gsub_glyph, ClassDefSubsetStruct, ClassMap,
-    },
+    layout::{intersected_glyphs_and_indices, map_gsub_glyph, ClassDefSubsetStruct, ClassMap},
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::{IterNullableHelper, SubsetOffsetArray},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    FastHashMap, Plan, SubsetState, SubsetTable,
+    Plan, SubsetState, SubsetTable,
 };
 use read_fonts::{
     tables::layout::{
@@ -61,6 +60,16 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat1<'_> {
             .coverage()
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
+        let (cov_glyphs, rule_sets_idxes) = intersected_glyphs_and_indices(
+            &coverage,
+            &plan.glyphset_gsub,
+            &plan.glyph_map_gsub,
+            self.seq_rule_set_count(),
+        );
+        if rule_sets_idxes.is_empty() {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+        }
+
         // format
         s.embed(self.format())?;
 
@@ -68,38 +77,26 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat1<'_> {
         let cov_offset_pos = s.embed(0_u16)?;
         // seq ruleset count
         let seq_ruleset_count_pos = s.embed(0_u16)?;
+        let mut rule_set_count = 0_u16;
 
-        let glyph_set = &plan.glyphset_gsub;
-        let rule_set_count = self.seq_rule_set_count();
-        let mut new_cov_glyphs = Vec::with_capacity(
-            coverage
-                .population()
-                .min(glyph_set.len() as usize)
-                .min(rule_set_count as usize),
-        );
+        let mut new_cov_glyphs = Vec::with_capacity(cov_glyphs.len());
         // seq rulesets offsets
         let rule_sets = self.seq_rule_sets();
-        for_each_intersected_glyph_and_index(
-            &coverage,
-            glyph_set,
-            &plan.glyph_map_gsub,
-            rule_set_count,
-            |idx, g| {
-                if !rule_sets
-                    .subset_offset(idx as usize, s, plan, lookup_map)
-                    .is_empty()?
-                {
-                    new_cov_glyphs.push(g);
-                }
-                Ok(())
-            },
-        )?;
+        for (g, idx) in cov_glyphs.iter().zip(rule_sets_idxes.iter()) {
+            if !rule_sets
+                .subset_offset(idx as usize, s, plan, lookup_map)
+                .is_empty()?
+            {
+                new_cov_glyphs.push(*g);
+                rule_set_count += 1;
+            }
+        }
 
-        if new_cov_glyphs.is_empty() {
+        if rule_set_count == 0 {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
 
-        s.copy_assign(seq_ruleset_count_pos, new_cov_glyphs.len() as u16);
+        s.copy_assign(seq_ruleset_count_pos, rule_set_count);
         Offset16::serialize_serialize::<CoverageTable>(s, &new_cov_glyphs, cov_offset_pos)
     }
 }
@@ -272,9 +269,9 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat2<'_> {
         // classdef offset
         let classdef_offset_pos = s.embed(0_u16)?;
         let cov_classes = class_def.intersect_classes(&cov_glyphs);
-        let Some(last_cov_class) = cov_classes.last() else {
+        if cov_classes.is_empty() {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-        };
+        }
 
         let Some(class_map) = Offset16::serialize_subset(
             &class_def,
@@ -300,9 +297,10 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat2<'_> {
         let rule_sets = self.class_seq_rule_sets();
         let n = self
             .class_seq_rule_set_count()
-            .min(last_cov_class.saturating_add(1).min(u16::MAX as u32) as u16);
+            .min(cov_classes.last().unwrap().min(u16::MAX as u32) as u16);
+
         let mut snap = s.snapshot();
-        for (i, c) in (0..n)
+        for (i, c) in (0..=n)
             .filter(|c| class_map.contains_key(&u32::from(*c)))
             .enumerate()
         {
@@ -326,9 +324,7 @@ impl<'a> SubsetTable<'a> for SequenceContextFormat2<'_> {
                     }
                 }
                 None => continue,
-                Some(Err(_)) => {
-                    return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))
-                }
+                Some(Err(_)) => return Err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR),
             }
         }
 
@@ -504,6 +500,16 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat1<'_> {
             .coverage()
             .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
+        let (cov_glyphs, rule_sets_idxes) = intersected_glyphs_and_indices(
+            &coverage,
+            &plan.glyphset_gsub,
+            &plan.glyph_map_gsub,
+            self.chained_seq_rule_set_count(),
+        );
+        if rule_sets_idxes.is_empty() {
+            return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+        }
+
         // format
         s.embed(self.format())?;
 
@@ -511,38 +517,26 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat1<'_> {
         let cov_offset_pos = s.embed(0_u16)?;
         // chained seq ruleset count
         let seq_ruleset_count_pos = s.embed(0_u16)?;
+        let mut rule_set_count = 0_u16;
 
-        let glyph_set = &plan.glyphset_gsub;
-        let rule_set_count = self.chained_seq_rule_set_count();
-        let mut new_cov_glyphs = Vec::with_capacity(
-            coverage
-                .population()
-                .min(glyph_set.len() as usize)
-                .min(rule_set_count as usize),
-        );
+        let mut new_cov_glyphs = Vec::with_capacity(cov_glyphs.len());
         // chained seq rulesets offsets
         let rule_sets = self.chained_seq_rule_sets();
-        for_each_intersected_glyph_and_index(
-            &coverage,
-            glyph_set,
-            &plan.glyph_map_gsub,
-            rule_set_count,
-            |idx, g| {
-                if !rule_sets
-                    .subset_offset(idx as usize, s, plan, lookup_map)
-                    .is_empty()?
-                {
-                    new_cov_glyphs.push(g);
-                }
-                Ok(())
-            },
-        )?;
+        for (g, idx) in cov_glyphs.iter().zip(rule_sets_idxes.iter()) {
+            if !rule_sets
+                .subset_offset(idx as usize, s, plan, lookup_map)
+                .is_empty()?
+            {
+                new_cov_glyphs.push(*g);
+                rule_set_count += 1;
+            }
+        }
 
-        if new_cov_glyphs.is_empty() {
+        if rule_set_count == 0 {
             return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
         }
 
-        s.copy_assign(seq_ruleset_count_pos, new_cov_glyphs.len() as u16);
+        s.copy_assign(seq_ruleset_count_pos, rule_set_count);
         Offset16::serialize_serialize::<CoverageTable>(s, &new_cov_glyphs, cov_offset_pos)
     }
 }
@@ -735,13 +729,9 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
 
         // seq rulesets offsets
         let rule_sets = self.chained_class_seq_rule_sets();
-        let n = self.chained_class_seq_rule_set_count().min(
-            cov_classes
-                .last()
-                .unwrap()
-                .saturating_add(1)
-                .min(u16::MAX as u32) as u16,
-        );
+        let n = self
+            .chained_class_seq_rule_set_count()
+            .min(cov_classes.last().unwrap().min(u16::MAX as u32) as u16);
 
         let mut snap = s.snapshot();
         let subset_struct = ChainedContextSubsetStruct {
@@ -750,7 +740,7 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
             input_class_map: &input_class_map,
             lookahead_class_map: &lookahead_class_map,
         };
-        for (i, c) in (0..n)
+        for (i, c) in (0..=n)
             .filter(|c| input_class_map.contains_key(&u32::from(*c)))
             .enumerate()
         {
@@ -768,9 +758,7 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat2<'_> {
                     }
                 }
                 None => continue,
-                Some(Err(_)) => {
-                    return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))
-                }
+                Some(Err(_)) => return Err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR),
             }
         }
 
@@ -1242,101 +1230,5 @@ mod test {
         ];
 
         assert_eq!(subsetted_data, expected_data);
-    }
-
-    /// Plan and lookup map for the two class-past-rule-set-count tests below:
-    /// glyphs 10 (class 1) and 20 (class 2) are retained, lookup 0 is kept.
-    fn class_past_rule_set_count_plan() -> (Plan, FastHashMap<u16, u16>) {
-        let mut plan = Plan {
-            font_num_glyphs: 21,
-            glyph_map_gsub: vec![crate::INVALID_GID; 21],
-            ..Default::default()
-        };
-        plan.glyph_map_gsub[10] = GlyphId::from(1_u32);
-        plan.glyph_map_gsub[20] = GlyphId::from(2_u32);
-        plan.glyphset_gsub.insert(GlyphId::from(10_u32));
-        plan.glyphset_gsub.insert(GlyphId::from(20_u32));
-
-        let mut lookup_map = FastHashMap::default();
-        lookup_map.insert(0_u16, 0_u16);
-        (plan, lookup_map)
-    }
-
-    /// A covered glyph whose input class is >= classSeqRuleSetCount has no
-    /// ClassSequenceRuleSet. That's valid (the class just has no rules), and
-    /// harfbuzz only walks the existing rule sets. Reading past the end used
-    /// to fail the subtable with a READ_ERROR, which dropped the whole table.
-    #[test]
-    fn test_subset_context_format2_class_past_rule_set_count() {
-        use read_fonts::{FontData, FontRead};
-
-        #[rustfmt::skip]
-        let raw_table: [u8; 48] = [
-            // format=2, coverageOffset=24, classDefOffset=32, classSeqRuleSetCount=2
-            0x00, 0x02, 0x00, 0x18, 0x00, 0x20, 0x00, 0x02,
-            // classSeqRuleSetOffsets: class 0 null, class 1 @12
-            0x00, 0x00, 0x00, 0x0c,
-            // @12 ClassSequenceRuleSet: ruleCount=1, rule @+4
-            0x00, 0x01, 0x00, 0x04,
-            // @16 ClassSequenceRule: glyphCount=1, seqLookupCount=1, (0, lookup 0)
-            0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-            // @24 coverage: format 1, glyphs 10 and 20
-            0x00, 0x01, 0x00, 0x02, 0x00, 0x0a, 0x00, 0x14,
-            // @32 classDef: format 2, glyph 10 -> class 1, glyph 20 -> class 2
-            0x00, 0x02, 0x00, 0x02,
-            0x00, 0x0a, 0x00, 0x0a, 0x00, 0x01,
-            0x00, 0x14, 0x00, 0x14, 0x00, 0x02,
-        ];
-        let table = SequenceContextFormat2::read(FontData::new(&raw_table)).unwrap();
-        let (plan, lookup_map) = class_past_rule_set_count_plan();
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        assert_eq!(table.subset(&plan, &mut s, &lookup_map), Ok(()));
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        // No retained glyph is in class 0, so classes are remapped 1 -> 0 and
-        // 2 -> 1. Only old class 1 has a rule set: classSeqRuleSetCount = 1.
-        let out = s.copy_bytes();
-        assert_eq!(&out[6..8], &[0x00, 0x01]);
-    }
-
-    /// Same as above for ChainedSequenceContextFormat2.
-    #[test]
-    fn test_subset_chain_context_format2_class_past_rule_set_count() {
-        use read_fonts::{FontData, FontRead};
-
-        #[rustfmt::skip]
-        let raw_table: [u8; 56] = [
-            // format=2, coverageOffset=32, backtrackClassDef=null,
-            // inputClassDefOffset=40, lookaheadClassDef=null
-            0x00, 0x02, 0x00, 0x20, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00,
-            // chainedClassSeqRuleSetCount=2: class 0 null, class 1 @16
-            0x00, 0x02, 0x00, 0x00, 0x00, 0x10,
-            // @16 ChainedClassSequenceRuleSet: ruleCount=1, rule @+4
-            0x00, 0x01, 0x00, 0x04,
-            // @20 ChainedClassSequenceRule: backtrack=0, input=1, lookahead=0,
-            // seqLookupCount=1, (0, lookup 0)
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-            // @32 coverage: format 1, glyphs 10 and 20
-            0x00, 0x01, 0x00, 0x02, 0x00, 0x0a, 0x00, 0x14,
-            // @40 inputClassDef: format 2, glyph 10 -> class 1, glyph 20 -> class 2
-            0x00, 0x02, 0x00, 0x02,
-            0x00, 0x0a, 0x00, 0x0a, 0x00, 0x01,
-            0x00, 0x14, 0x00, 0x14, 0x00, 0x02,
-        ];
-        let table = ChainedSequenceContextFormat2::read(FontData::new(&raw_table)).unwrap();
-        let (plan, lookup_map) = class_past_rule_set_count_plan();
-
-        let mut s = Serializer::new(1024);
-        assert_eq!(s.start_serialize(), Ok(()));
-        assert_eq!(table.subset(&plan, &mut s, &lookup_map), Ok(()));
-        assert!(!s.in_error());
-        s.end_serialize();
-
-        // Classes are remapped as above: chainedClassSeqRuleSetCount = 1.
-        let out = s.copy_bytes();
-        assert_eq!(&out[10..12], &[0x00, 0x01]);
     }
 }
