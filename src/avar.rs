@@ -1,6 +1,6 @@
 use font_types::{F2Dot14, Fixed};
 use skrifa::raw::{tables::avar::SegmentMaps, ReadError, TopLevelTable};
-use write_fonts::read::tables::avar::Avar;
+use write_fonts::read::tables::{avar::Avar, variations::DeltaSetIndex};
 
 use crate::{
     serialize::SerializeErrorFlags,
@@ -92,15 +92,68 @@ fn subset_avar(
     Ok(())
 }
 
+/// Applies the `avar` mapping to a set of normalized coordinates (in 2.14 units).
+///
+/// Mirrors HarfBuzz's `OT::avar::map_coords_2_14`. For version 1 fonts this is
+/// just the per-axis segment maps. For avar version 2 fonts the segment-mapped
+/// coordinates additionally have the delta from the axis index map + item
+/// variation store applied; that delta is evaluated using the *segment-mapped*
+/// coordinates, exactly as HarfBuzz does.
 pub(crate) fn map_coords_2_14(avar: &Avar, coords: Vec<f32>) -> Result<Vec<f32>, ReadError> {
-    let maps = avar.axis_segment_maps();
-    coords
-        .into_iter()
-        .zip(maps.iter())
-        .map(|(coord, maybe_map)| {
-            maybe_map.map(|m| m.apply(Fixed::from_f64(coord as f64)).to_f32())
-        })
-        .collect()
+    let mut coords = coords;
+    let axis_count = avar.axis_count() as usize;
+    let count = coords.len().min(axis_count);
+
+    // Segment-mapped coordinates as raw 2.14 integers.
+    let mut coords_2_14 = vec![0i32; coords.len()];
+    for (i, maybe_map) in avar.axis_segment_maps().iter().take(count).enumerate() {
+        let segment_map = maybe_map?;
+        let v = (segment_map
+            .apply(Fixed::from_f64(coords[i] as f64))
+            .to_f32()
+            * 16384.0)
+            .round() as i32;
+        coords_2_14[i] = v;
+        coords[i] = v as f32 / 16384.0;
+    }
+
+    if avar.version().major < 2 {
+        return Ok(coords);
+    }
+
+    // avar2: apply the (axis index -> variation index) map and evaluate the
+    // item variation store at the segment-mapped coordinates.
+    let varidx_map = avar.axis_index_map().transpose()?;
+    let var_store = avar.var_store().transpose()?;
+
+    let mapped_coords: Vec<F2Dot14> = coords_2_14
+        .iter()
+        .map(|&v| F2Dot14::from_bits(v as i16))
+        .collect();
+
+    for (i, coord) in coords.iter_mut().enumerate() {
+        let varidx = match &varidx_map {
+            Some(map) => map.get(i as u32)?,
+            None => DeltaSetIndex {
+                outer: (i >> 16) as u16,
+                inner: i as u16,
+            },
+        };
+        let delta = match &var_store {
+            Some(store) => store
+                .compute_delta(varidx, &mapped_coords)
+                .map(|d| d.to_i32())
+                .unwrap_or(0),
+            None => 0,
+        };
+        // Apply the delta unclamped and clamp only the result to [-1, +1],
+        // matching HarfBuzz/fontTools.
+        let mut v = coords_2_14[i] + delta.clamp(-(1 << 15), 1 << 15);
+        v = v.clamp(-(1 << 14), 1 << 14);
+        *coord = v as f32 / 16384.0;
+    }
+
+    Ok(coords)
 }
 
 fn unmap_axis_range(range: &Triple, segment_maps: &SegmentMaps) -> Triple {

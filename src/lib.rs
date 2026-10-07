@@ -569,12 +569,13 @@ impl Plan {
         let has_avar = font.avar().is_ok();
         let mut axis_not_pinned = false;
         let mut new_axis_idx = 0;
-        let mut normalized_mins = vec![];
-        let mut normalized_defaults = vec![];
-        let mut normalized_maxs = vec![];
-        let mut normalized_mins_16_16 = vec![];
-        let mut normalized_defaults_16_16 = vec![];
-        let mut normalized_maxs_16_16 = vec![];
+        let mut normalized_mins = vec![0.0f32; if has_avar { axes.len() } else { 0 }];
+        let mut normalized_defaults = vec![0.0f32; if has_avar { axes.len() } else { 0 }];
+        let mut normalized_maxs = vec![0.0f32; if has_avar { axes.len() } else { 0 }];
+        let mut normalized_mins_16_16 = vec![0i32; if has_avar { axes.len() } else { 0 }];
+        let mut normalized_defaults_16_16 = vec![0i32; if has_avar { axes.len() } else { 0 }];
+        let mut normalized_maxs_16_16 = vec![0i32; if has_avar { axes.len() } else { 0 }];
+        let mut last_avar_axis_idx: Option<usize> = None;
         self.normalized_coords = vec![F2Dot14::ZERO; axes.len()];
         let mut normalized_coords_16_16 = vec![0i32; axes.len()];
         for (i, axis) in axes.iter().enumerate() {
@@ -620,12 +621,15 @@ impl Plan {
                 let normalized_max = (normalized_max * 16384.0).round() / 16384.0;
 
                 if has_avar {
-                    normalized_mins.push(normalized_min);
-                    normalized_defaults.push(normalized_default);
-                    normalized_maxs.push(normalized_max);
-                    normalized_mins_16_16.push(normalized_min_16_16);
-                    normalized_defaults_16_16.push(normalized_default_16_16);
-                    normalized_maxs_16_16.push(normalized_max_16_16);
+                    // Index by axis index (avar's axis index map / segment maps
+                    // are indexed that way), matching HarfBuzz.
+                    normalized_mins[i] = normalized_min;
+                    normalized_defaults[i] = normalized_default;
+                    normalized_maxs[i] = normalized_max;
+                    normalized_mins_16_16[i] = normalized_min_16_16;
+                    normalized_defaults_16_16[i] = normalized_default_16_16;
+                    normalized_maxs_16_16[i] = normalized_max_16_16;
+                    last_avar_axis_idx = Some(i);
                 } else {
                     self.axes_location.insert(
                         axis_tag,
@@ -645,10 +649,20 @@ impl Plan {
         }
         self.all_axes_pinned = !axis_not_pinned;
         if let Ok(avar) = font.avar() {
-            if avar.version().major == 2 {
+            if avar.version().major == 2 && !self.all_axes_pinned {
                 // Partial-instancing avar2 table is not supported
                 return Err(ReadError::InvalidFormat(2));
             }
+            // HarfBuzz maps only the first (last mentioned axis + 1) axes; the
+            // avar2 axis index map is indexed by axis index.
+            let coords_len = last_avar_axis_idx.map_or(0, |i| i + 1);
+            normalized_mins.truncate(coords_len);
+            normalized_defaults.truncate(coords_len);
+            normalized_maxs.truncate(coords_len);
+            normalized_mins_16_16.truncate(coords_len);
+            normalized_defaults_16_16.truncate(coords_len);
+            normalized_maxs_16_16.truncate(coords_len);
+
             normalized_mins = avar::map_coords_2_14(&avar, normalized_mins)?;
             normalized_defaults = avar::map_coords_2_14(&avar, normalized_defaults)?;
             normalized_maxs = avar::map_coords_2_14(&avar, normalized_maxs)?;
@@ -1243,7 +1257,9 @@ impl Plan {
         let Ok(glyf) = font.glyf() else { return Ok(()) };
         for (new_gid, old_gid) in self.new_to_old_gid_list.iter() {
             let glyph = loca.get_glyf(*old_gid, &glyf).unwrap();
-            let coords = &self.normalized_coords_16_16;
+            // HarfBuzz instantiates gvar using the axis coords normalized to
+            // F2Dot14 (2.14) and mapped through avar, so use the same values.
+            let coords = &self.normalized_coords;
             // log::debug!("Instantiating at coords (16.16): {:?}", coords);
             match glyph {
                 Some(Glyph::Simple(simple_glyph)) => {

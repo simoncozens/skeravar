@@ -601,6 +601,9 @@ fn gen_subset_font_name(
     let (profile_name, _profile_extension) = profile.rsplit_once('.').unwrap();
 
     if let Some(inst) = instance {
+        // Take the first six axes
+        let inst = inst.split(',').take(6).collect::<Vec<_>>().join(",");
+
         let instance_name = inst.replace(':', "-");
         PathBuf::from(format!(
             "{font_base_name}.{profile_name}.{subset_name}.{instance_name}.{font_extension}"
