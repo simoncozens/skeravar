@@ -3,7 +3,7 @@
 use crate::{
     gpos::value_record::compute_effective_format,
     layout::{
-        intersected_coverage_indices, intersected_glyphs_and_indices, map_gsub_glyph,
+        for_each_intersected_coverage_index, intersected_glyphs_and_indices, map_gsub_glyph,
         ClassDefSubsetStruct,
     },
     offset::{SerializeSerialize, SerializeSubset},
@@ -55,41 +55,40 @@ fn compute_effective_pair_formats_1(
     let mut new_format1 = ValueFormat::empty();
     let mut new_format2 = ValueFormat::empty();
 
-    let orig_format1 = pair_pos.value_format1();
-    let orig_format2 = pair_pos.value_format2();
-
     let coverage = pair_pos.coverage()?;
     let pair_sets = pair_pos.pair_sets();
-    let partset_idxes = intersected_coverage_indices(&coverage, glyph_set);
-    for i in partset_idxes.iter() {
-        let pair_set = match pair_sets.get(i as usize) {
-            Err(ReadError::NullOffset) => continue,
-            other => other,
-        }?;
-        for pair_value_rec in pair_set.pair_value_records().iter() {
-            let pair_value_rec = pair_value_rec?;
-            let second_glyph = pair_value_rec.second_glyph();
-            if !glyph_set.contains(GlyphId::from(second_glyph)) {
-                continue;
-            }
+    for_each_intersected_coverage_index::<ReadError>(
+        &coverage,
+        glyph_set,
+        pair_pos.pair_set_count(),
+        |i| {
+            let pair_set = match pair_sets.get(i as usize) {
+                Err(ReadError::NullOffset) => return Ok(()),
+                other => other?,
+            };
+            for pair_value_rec in pair_set.pair_value_records().iter() {
+                let pair_value_rec = pair_value_rec?;
+                let second_glyph = pair_value_rec.second_glyph();
+                if !glyph_set.contains(GlyphId::from(second_glyph)) {
+                    continue;
+                }
 
-            new_format1 |= compute_effective_format(
-                pair_value_rec.value_record1(),
-                strip_hints,
-                strip_empty,
-                Some(plan),
-            );
-            new_format2 |= compute_effective_format(
-                pair_value_rec.value_record2(),
-                strip_hints,
-                strip_empty,
-                Some(plan),
-            );
-        }
-        if new_format1 == orig_format1 && new_format2 == orig_format2 {
-            break;
-        }
-    }
+                new_format1 |= compute_effective_format(
+                    pair_value_rec.value_record1(),
+                    strip_hints,
+                    strip_empty,
+                    Some(plan),
+                );
+                new_format2 |= compute_effective_format(
+                    pair_value_rec.value_record2(),
+                    strip_hints,
+                    strip_empty,
+                    Some(plan),
+                );
+            }
+            Ok(())
+        },
+    )?;
 
     Ok((new_format1, new_format2))
 }
@@ -468,12 +467,17 @@ impl CollectVariationIndices for PairPosFormat1<'_> {
 
         let glyph_set = &plan.glyphset_gsub;
         let pair_sets = self.pair_sets();
-        let pairset_idxes = intersected_coverage_indices(&coverage, glyph_set);
-        for i in pairset_idxes.iter() {
-            if let Ok(pair_set) = pair_sets.get(i as usize) {
-                pair_set.collect_variation_indices(plan, varidx_set);
-            }
-        }
+        let _ = for_each_intersected_coverage_index::<()>(
+            &coverage,
+            glyph_set,
+            self.pair_set_count(),
+            |i| {
+                if let Ok(pair_set) = pair_sets.get(i as usize) {
+                    pair_set.collect_variation_indices(plan, varidx_set);
+                }
+                Ok(())
+            },
+        );
     }
 }
 
