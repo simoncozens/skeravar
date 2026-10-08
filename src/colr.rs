@@ -1,6 +1,6 @@
 //! impl subset() for COLR
 use crate::{
-    fnv::FnvHashMap,
+    FastHashMap,
     offset::{SerializeCopy, SerializeSubset},
     offset_array::SubsetOffsetArray,
     serialize::{SerializeErrorFlags, Serializer},
@@ -37,8 +37,8 @@ use write_fonts::{
 /// Helper for applying deltas during COLR instantiation
 #[derive(Clone, Copy)]
 pub struct ColrInstancer<'a> {
-    delta_map: &'a FnvHashMap<u32, (u32, F48Dot16)>,
-    old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
+    delta_map: &'a FastHashMap<u32, (u32, F48Dot16)>,
+    old_to_new_deltaset_map: &'a FastHashMap<u32, u32>,
     delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
     has_variations: bool,
     all_axes_pinned: bool,
@@ -46,8 +46,8 @@ pub struct ColrInstancer<'a> {
 
 impl<'a> ColrInstancer<'a> {
     pub fn new(
-        delta_map: &'a FnvHashMap<u32, (u32, F48Dot16)>,
-        old_to_new_deltaset_map: &'a FnvHashMap<u32, u32>,
+        delta_map: &'a FastHashMap<u32, (u32, F48Dot16)>,
+        old_to_new_deltaset_map: &'a FastHashMap<u32, u32>,
         delta_set_index_map: Option<&'a DeltaSetIndexMap<'a>>,
         has_variations: bool,
         all_axes_pinned: bool,
@@ -585,7 +585,7 @@ impl<'a> SubsetTable<'a> for ClipList<'_> {
         let retained_last_gid = glyph_set.last().unwrap().to_u32();
 
         let mut new_gids_set = IntSet::empty();
-        let mut new_gids_offset_map = FnvHashMap::default();
+        let mut new_gids_offset_map = FastHashMap::default();
         for clip in self.clips() {
             let offset = clip.clip_box_offset();
             if offset.is_null() {
@@ -636,7 +636,7 @@ fn serialize_clips(
     s: &mut Serializer,
     plan: &Plan,
     gids_set: &IntSet<u16>,
-    gids_offset_map: &FnvHashMap<u16, Offset24>,
+    gids_offset_map: &FastHashMap<u16, Offset24>,
     args: ColrInstancer<'_>,
 ) -> Result<u32, SerializeErrorFlags> {
     let mut count = 0;
@@ -749,7 +749,7 @@ impl<'a> SubsetTable<'a> for ClipBoxFormat2<'_> {
 }
 
 fn create_deltaset_index_map_subset_plan_from_map(
-    deltaset_idx_varidx_map: &FnvHashMap<u32, u32>,
+    deltaset_idx_varidx_map: &FastHashMap<u32, u32>,
 ) -> Option<DeltaSetIndexMapSerializePlan<'_>> {
     if deltaset_idx_varidx_map.is_empty() {
         return None;

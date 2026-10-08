@@ -1,6 +1,6 @@
 //! impl subset() for ReverseChainSingleSubst subtable
 use crate::{
-    fnv::FnvHashMap,
+    FastHashMap,
     layout::map_gsub_glyph,
     offset::SerializeSerialize,
     serialize::{SerializeErrorFlags, Serializer},
@@ -16,7 +16,7 @@ use write_fonts::{
 };
 
 impl<'a> SubsetTable<'a> for ReverseChainSingleSubstFormat1<'_> {
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>);
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,

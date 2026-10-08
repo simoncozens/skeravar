@@ -1,7 +1,7 @@
 //! impl subset() for HVAR
 
 use crate::{
-    fnv::FnvHashMap,
+    FastHashMap,
     offset::{SerializeCopy, SerializeSerialize, SerializeSubset},
     serialize::{SerializeErrorFlags, Serializer},
     variations::{subset_itemvarstore_with_instancing, DeltaSetIndexMapSerializePlan},
@@ -159,7 +159,7 @@ pub(crate) struct IndexMapSubsetPlan {
     max_inners: Vec<u16>,
     outer_bit_count: u8,
     inner_bit_count: u8,
-    output_map: FnvHashMap<u32, u32>,
+    output_map: FastHashMap<u32, u32>,
 }
 
 impl IndexMapSubsetPlan {
@@ -300,7 +300,7 @@ impl IndexMapSubsetPlan {
     fn remap_after_instantiation(
         &mut self,
         plan: &Plan,
-        varidx_map: &FnvHashMap<u32, u32>,
+        varidx_map: &FastHashMap<u32, u32>,
     ) -> bool {
         self.outer_bit_count = 1;
         self.inner_bit_count = 1;
@@ -458,7 +458,7 @@ impl HvarVvarSubsetPlan {
     pub(crate) fn remap_index_map_plans(
         &mut self,
         plan: &Plan,
-        varidx_map: &FnvHashMap<u32, u32>,
+        varidx_map: &FastHashMap<u32, u32>,
     ) -> bool {
         for idx_plan in &mut self.index_map_subset_plans {
             if !idx_plan.remap_after_instantiation(plan, varidx_map) {

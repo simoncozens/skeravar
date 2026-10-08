@@ -1,4 +1,4 @@
-use crate::{fnv::FnvHashMap, variations::solver::Triple, Plan, SubsetError};
+use crate::{FastHashMap, variations::solver::Triple, Plan, SubsetError};
 use skrifa::{
     raw::{
         tables::stat::{AxisValue, AxisValueTableFlags, Stat},
@@ -21,7 +21,7 @@ use write_fonts::{
 
 fn axis_values_from_axis_limits<'a>(
     stat: &'a Stat,
-    axis_limits: &FnvHashMap<Tag, Triple>,
+    axis_limits: &FastHashMap<Tag, Triple>,
 ) -> Result<Vec<AxisValue<'a>>, SubsetError> {
     let Some(Ok(subtable)) = stat.offset_to_axis_values() else {
         return Err(SubsetError::SubsetTableError(Stat::TAG));
@@ -124,7 +124,7 @@ fn sort_axis_value_tables<'a>(axis_value_tables: Vec<AxisValue<'a>>) -> Vec<Axis
 
 fn update_name_table_from_stat(plan: &Plan, fontref: &FontRef) -> Result<Vec<u8>, SubsetError> {
     let stat = fontref.stat().map_err(SubsetError::ReadError)?;
-    let default_axis_coords: FnvHashMap<Tag, Triple> = plan
+    let default_axis_coords: FastHashMap<Tag, Triple> = plan
         .user_axes_location
         .iter()
         .map(|(tag, triple)| (*tag, Triple::point(triple.middle)))

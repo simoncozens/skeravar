@@ -370,6 +370,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "font-test-data"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -909,6 +915,7 @@ dependencies = [
  "criterion",
  "diff",
  "env_logger",
+ "foldhash",
  "font-test-data",
  "font-types",
  "hashbrown",

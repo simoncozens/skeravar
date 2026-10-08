@@ -1,7 +1,7 @@
 //! impl subset() for MVAR
 
 use crate::{
-    fnv::FnvHashMap, offset::SerializeCopy, serialize::Serializer,
+    FastHashMap, offset::SerializeCopy, serialize::Serializer,
     variations::subset_itemvarstore_with_instancing, IncBiMap, Plan, Subset, SubsetError,
 };
 use font_types::Offset16;
@@ -46,7 +46,7 @@ impl Subset for Mvar<'_> {
             .map_err(|_| SubsetError::SubsetTableError(Mvar::TAG))?;
 
         let mut inner_maps: Vec<IncBiMap> = Vec::new();
-        let mut varidx_map: FnvHashMap<u32, u32> = FnvHashMap::default();
+        let mut varidx_map: FastHashMap<u32, u32> = FastHashMap::default();
         if let Some(ref var_store) = var_store {
             let vardata_count = var_store.item_variation_data_count() as usize;
             let mut inner_sets = vec![IntSet::empty(); vardata_count];

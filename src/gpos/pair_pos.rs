@@ -12,7 +12,7 @@ use crate::{
     CollectVariationIndices, Plan, SubsetFlags, SubsetState, SubsetTable,
 };
 
-use crate::fnv::FnvHashMap;
+use crate::FastHashMap;
 use write_fonts::{
     read::{
         collections::IntSet,
@@ -29,7 +29,7 @@ use write_fonts::{
 };
 
 impl<'a> SubsetTable<'a> for PairPos<'_> {
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>);
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,
@@ -314,7 +314,7 @@ impl<'a> SubsetTable<'a> for PairPosFormat2<'_> {
             classdef1_offset_pos,
         ) {
             Ok(Some(out)) => out,
-            _ => FnvHashMap::default(),
+            _ => FastHashMap::default(),
         };
 
         if class1_map.is_empty() {
@@ -341,7 +341,7 @@ impl<'a> SubsetTable<'a> for PairPosFormat2<'_> {
             classdef2_offset_pos,
         ) {
             Ok(Some(out)) => out,
-            _ => FnvHashMap::default(),
+            _ => FastHashMap::default(),
         };
 
         // If only Class2 0 left, no need to keep anything.

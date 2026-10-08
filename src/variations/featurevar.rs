@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::fnv::FnvHashMap;
+use crate::FastHashMap;
 use font_types::{F2Dot14, MajorMinor, Offset32};
 use skrifa::{
     raw::{
@@ -37,7 +37,7 @@ enum CondWithVar {
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
-pub(crate) struct ConditionMap(FnvHashMap<usize, u32>);
+pub(crate) struct ConditionMap(FastHashMap<usize, u32>);
 impl Hash for ConditionMap {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Custom hash implementation to ensure the order of conditions does not affect the hash
@@ -59,9 +59,9 @@ trait KeepWithVariations {
 }
 
 pub(crate) struct CollectFeatureSubstitutesContext<'a> {
-    pub(crate) axes_index_tag_map: &'a FnvHashMap<usize, Tag>,
-    pub(crate) axes_location: &'a FnvHashMap<Tag, Triple>,
-    pub(crate) record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
+    pub(crate) axes_index_tag_map: &'a FastHashMap<usize, Tag>,
+    pub(crate) axes_location: &'a FastHashMap<Tag, Triple>,
+    pub(crate) record_cond_idx_map: FastHashMap<u16, IntSet<u16>>,
     pub(crate) catch_all_record_feature_indices: IntSet<u16>,
 
     pub(crate) feature_indices: IntSet<u16>,
@@ -69,9 +69,9 @@ pub(crate) struct CollectFeatureSubstitutesContext<'a> {
     pub(crate) variation_applied: bool,
     pub(crate) universal: bool,
     pub(crate) cur_record_idx: u16,
-    pub(crate) conditionset_map: FnvHashMap<ConditionMap, u16>,
+    pub(crate) conditionset_map: FastHashMap<ConditionMap, u16>,
     /// For each feature index that has a substitute, store the lookup indices from that substitute
-    pub(crate) feature_substitutes_lookup_map: FnvHashMap<u16, IntSet<u16>>,
+    pub(crate) feature_substitutes_lookup_map: FastHashMap<u16, IntSet<u16>>,
 }
 
 impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
@@ -141,7 +141,7 @@ impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
 // ref: <https://github.com/fonttools/fonttools/blob/3c1822544d608f87c41fc8fb9ba41ea129257aa8/Lib/fontTools/subset/__init__.py#L1782>
 fn num_variation_record_to_retain(
     feature_variations: &FeatureVariations,
-    feature_index_map: &FnvHashMap<u16, u16>,
+    feature_index_map: &FastHashMap<u16, u16>,
     s: &mut Serializer,
 ) -> Result<u32, SerializeErrorFlags> {
     let num_records = feature_variations.feature_variation_record_count();
@@ -189,7 +189,7 @@ impl<'a> SubsetTable<'a> for EmptyFeature {
 impl<'a> SubsetTable<'a> for FeatureVariationRecord {
     type ArgsForSubset = (
         FontData<'a>,
-        &'a FnvHashMap<u16, u16>,
+        &'a FastHashMap<u16, u16>,
         &'a mut SubsetLayoutContext,
         bool,
     );
@@ -299,7 +299,7 @@ impl<'a> SubsetTable<'a> for ConditionSet<'a> {
 // Wrapper for catch-all FeatureTableSubstitution
 struct CatchAllFeatureTableSubst<'a> {
     old_features: &'a IntSet<u16>,
-    feature_index_map: &'a FnvHashMap<u16, u16>,
+    feature_index_map: &'a FastHashMap<u16, u16>,
 }
 
 impl<'a> SubsetTable<'a> for CatchAllFeatureTableSubst<'a> {
@@ -523,7 +523,7 @@ impl KeepWithVariations for ConditionFormat1<'_> {
 }
 
 impl<'a> SubsetTable<'a> for FeatureTableSubstitution<'_> {
-    type ArgsForSubset = (&'a FnvHashMap<u16, u16>, &'a mut SubsetLayoutContext);
+    type ArgsForSubset = (&'a FastHashMap<u16, u16>, &'a mut SubsetLayoutContext);
     type Output = ();
     fn subset(
         &self,
@@ -558,7 +558,7 @@ impl<'a> SubsetTable<'a> for FeatureTableSubstitution<'_> {
 
 impl<'a> SubsetTable<'a> for FeatureTableSubstitutionRecord {
     type ArgsForSubset = (
-        &'a FnvHashMap<u16, u16>,
+        &'a FastHashMap<u16, u16>,
         &'a mut SubsetLayoutContext,
         FontData<'a>,
     );
@@ -648,17 +648,17 @@ pub(crate) fn collect_feature_substitutes_with_variations(
 pub(crate) struct FeatureSubstituteCollectionResult {
     pub(crate) catch_all_record_feature_indices: IntSet<u16>,
     /// For each feature index that has a substitute, store the lookup indices from that substitute
-    pub(crate) feature_substitutes_lookup_map: FnvHashMap<u16, IntSet<u16>>,
+    pub(crate) feature_substitutes_lookup_map: FastHashMap<u16, IntSet<u16>>,
     // pub(crate) variation_applied: bool,
-    pub(crate) record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
+    pub(crate) record_cond_idx_map: FastHashMap<u16, IntSet<u16>>,
 }
 impl FeatureSubstituteCollectionResult {
     pub(crate) fn empty() -> Self {
         Self {
             catch_all_record_feature_indices: IntSet::default(),
-            feature_substitutes_lookup_map: FnvHashMap::default(),
+            feature_substitutes_lookup_map: FastHashMap::default(),
             // variation_applied: false,
-            record_cond_idx_map: FnvHashMap::default(),
+            record_cond_idx_map: FastHashMap::default(),
         }
     }
 }
@@ -710,7 +710,7 @@ pub(crate) fn collect_lookups_with_substitutes(
 pub(crate) fn feature_variation_collect_lookups(
     feature_variations: &FeatureVariations,
     feature_indices: &IntSet<u16>,
-    feature_record_cond_idx_map: &FnvHashMap<u16, IntSet<u16>>,
+    feature_record_cond_idx_map: &FastHashMap<u16, IntSet<u16>>,
     lookup_indices: &mut IntSet<u16>,
 ) -> Result<(), SubsetError> {
     let var_records = feature_variations.feature_variation_records();

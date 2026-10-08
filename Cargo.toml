@@ -27,6 +27,7 @@ default = ["cli"]
 cli = ["clap"]
 
 [dependencies]
+foldhash = { version = "0.2.0", default-features = false }
 clap = { version = "4.5.4", features = ["derive"], optional = true }
 env_logger = "0.11"
 

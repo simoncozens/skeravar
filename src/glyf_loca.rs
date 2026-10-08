@@ -1,7 +1,7 @@
 //! impl subset() for glyf and loca
 use std::{collections::HashSet, fmt::Debug};
 
-use crate::fnv::FnvHashMap;
+use crate::FastHashMap;
 
 use crate::{
     estimate_subset_table_size,
@@ -419,11 +419,11 @@ fn trim_simple_glyph_padding(glyph_data: &[u8], num_coords: u16) -> usize {
 struct GlyfAccelerator<'a> {
     loca: Loca<'a>,
     head: Head<'a>,
-    instance_deltas: &'a FnvHashMap<GlyphId, Vec<Point<f32>>>, // *new* GID deltas
+    instance_deltas: &'a FastHashMap<GlyphId, Vec<Point<f32>>>, // *new* GID deltas
     hmtx: skrifa::raw::tables::hmtx::Hmtx<'a>,
     vmtx: Option<skrifa::raw::tables::vmtx::Vmtx<'a>>,
     glyf: Glyf<'a>,
-    glyph_map: &'a FnvHashMap<GlyphId, GlyphId>,
+    glyph_map: &'a FastHashMap<GlyphId, GlyphId>,
 }
 
 impl<'a> GlyfAccelerator<'a> {

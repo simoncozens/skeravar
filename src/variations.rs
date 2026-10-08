@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    fnv::FnvHashMap,
+    FastHashMap,
     glyf_loca::{ContourPoint, ContourPoints},
     inc_bimap::IncBiMap,
     offset::SerializeSubset,
@@ -58,7 +58,7 @@ pub(crate) mod solver;
 /// Hashable wrapper around a region (axis coordinates map).
 /// Implements Hash for use as a HashMap key by hashing entries in sorted order.
 #[derive(Clone, Default)]
-pub(crate) struct Region(FnvHashMap<Tag, Triple>);
+pub(crate) struct Region(FastHashMap<Tag, Triple>);
 
 impl Hash for Region {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -135,7 +135,7 @@ impl Region {
     /// Maps axis indices to tags using the axes_old_index_tag_map
     fn from_readfonts_tuple<T: skrifa::raw::tables::variations::TupleDelta>(
         gvar_tuple: TupleVariation<'_, T>,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
     ) -> Result<Self, SerializeErrorFlags> {
         let region = (0..axes_old_index_tag_map.len())
             .map(|axis_index| {
@@ -188,7 +188,7 @@ impl Region {
                     },
                 ))
             })
-            .collect::<Result<FnvHashMap<_, _>, SerializeErrorFlags>>()?;
+            .collect::<Result<FastHashMap<_, _>, SerializeErrorFlags>>()?;
         Ok(Region(region))
     }
 
@@ -277,7 +277,7 @@ impl TupleDelta {
     fn from_gvar_tuple(
         gvar_tuple: TupleVariation<'_, GlyphDelta>,
         point_count: usize,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
     ) -> Result<Self, SerializeErrorFlags> {
         let mut deltas = vec![Point::new(0.0, 0.0); point_count];
         let mut indices = vec![true; point_count];
@@ -312,7 +312,7 @@ impl TupleDelta {
     fn from_cvar_tuple(
         cvar_tuple: TupleVariation<'_, CvtDelta>,
         point_count: usize,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
     ) -> Result<Self, SerializeErrorFlags> {
         let orig_deltas = cvar_tuple.deltas().collect::<Vec<_>>();
 
@@ -552,7 +552,7 @@ impl TupleVariations {
     pub fn from_gvar(
         value: TupleVariationData<'_, GlyphDelta>,
         point_count: usize,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
     ) -> Result<Self, SerializeErrorFlags> {
         Ok(TupleVariations {
             tuple_vars: value
@@ -567,7 +567,7 @@ impl TupleVariations {
     pub fn from_cvar(
         value: TupleVariationData<'_, CvtDelta>,
         point_count: usize,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
     ) -> Result<Self, SerializeErrorFlags> {
         Ok(TupleVariations {
             tuple_vars: value
@@ -581,8 +581,8 @@ impl TupleVariations {
     // Ported directly from harfbuzz
     pub fn instantiate(
         &mut self,
-        normalized_axes_location: &FnvHashMap<Tag, Triple>,
-        axes_triple_distances: &FnvHashMap<Tag, TripleDistances>,
+        normalized_axes_location: &FastHashMap<Tag, Triple>,
+        axes_triple_distances: &FastHashMap<Tag, TripleDistances>,
         contour_points: Option<&ContourPoints>,
         optimize: bool,
     ) -> Result<(), SerializeErrorFlags> {
@@ -679,8 +679,8 @@ impl TupleVariations {
     // Ported directly from harfbuzz
     fn change_tuple_variations_axis_limits(
         &mut self,
-        normalized_axes_location: &FnvHashMap<Tag, Triple>,
-        axes_triple_distances: &FnvHashMap<Tag, TripleDistances>,
+        normalized_axes_location: &FastHashMap<Tag, Triple>,
+        axes_triple_distances: &FastHashMap<Tag, TripleDistances>,
     ) -> Result<(), SerializeErrorFlags> {
         // sort axis_tag/axis_limits, make result deterministic
         let mut axis_tags = normalized_axes_location.keys().copied().collect::<Vec<_>>();
@@ -712,7 +712,7 @@ impl TupleVariations {
     fn create_from_item_var_data(
         var_data: ItemVariationData,
         regions: &[Region],
-        _axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        _axes_old_index_tag_map: &FastHashMap<usize, Tag>,
         inner_map: Option<&IncBiMap>,
         // Returns self and new item count
     ) -> Result<(Self, usize), SerializeErrorFlags> {
@@ -1070,13 +1070,13 @@ pub(crate) struct ItemVariations {
     /// List of unique regions for the output
     region_list: Vec<Region>,
     /// Map from region coordinates to column index
-    region_map: FnvHashMap<Region, usize>,
+    region_map: FastHashMap<Region, usize>,
     /// all delta rows after instantiation
     delta_rows: Vec<Vec<i32>>,
     /// final optimized vector of encoding objects used to assemble the varstore
     encodings: Vec<DeltaRowEncoding>,
     /// old varidxes -> new var_idxes map
-    varidx_map: FnvHashMap<u32, u32>,
+    varidx_map: FastHashMap<u32, u32>,
     /// Whether we have long (32-bit) deltas
     has_long: bool,
 }
@@ -1086,7 +1086,7 @@ impl ItemVariations {
     /// Corresponds to Harfbuzz's create_from_item_varstore.
     pub(crate) fn create_from_item_varstore(
         var_store: &ItemVariationStore,
-        axes_old_index_tag_map: &FnvHashMap<usize, Tag>,
+        axes_old_index_tag_map: &FastHashMap<usize, Tag>,
         inner_maps: &[IncBiMap],
     ) -> Result<Self, SerializeErrorFlags> {
         let region_list = var_store
@@ -1123,7 +1123,7 @@ impl ItemVariations {
                                 },
                             ))
                         })
-                        .collect::<FnvHashMap<_, _>>()
+                        .collect::<FastHashMap<_, _>>()
                 })
                 .map(Region)
                 .collect::<Vec<_>>()
@@ -1175,10 +1175,10 @@ impl ItemVariations {
             var_data_num_rows,
             orig_region_list: orig_region_list.clone(),
             region_list: Vec::new(),
-            region_map: FnvHashMap::default(),
+            region_map: FastHashMap::default(),
             delta_rows: Vec::new(),
             encodings: Vec::new(),
-            varidx_map: FnvHashMap::default(),
+            varidx_map: FastHashMap::default(),
             has_long: false,
         })
     }
@@ -1187,8 +1187,8 @@ impl ItemVariations {
     /// Corresponds to Harfbuzz's instantiate_tuple_vars.
     pub(crate) fn instantiate_tuple_vars(
         &mut self,
-        normalized_axes_location: &FnvHashMap<Tag, Triple>,
-        axes_triple_distances: &FnvHashMap<Tag, TripleDistances>,
+        normalized_axes_location: &FastHashMap<Tag, Triple>,
+        axes_triple_distances: &FastHashMap<Tag, TripleDistances>,
     ) -> Result<(), SerializeErrorFlags> {
         for tuple_variations in &mut self.vars {
             tuple_variations.instantiate(
@@ -1205,8 +1205,8 @@ impl ItemVariations {
     /// Ported directly from harfbuzz
     fn build_region_list(&mut self) -> Result<(), SerializeErrorFlags> {
         /* scan all tuples and collect all unique regions, prune unused regions */
-        let mut all_regions = FnvHashMap::default();
-        let mut used_regions = FnvHashMap::default();
+        let mut all_regions = FastHashMap::default();
+        let mut used_regions = FastHashMap::default();
 
         /* use a vector when inserting new regions, make result deterministic */
         let mut all_unique_regions = Vec::new();
@@ -1302,12 +1302,12 @@ impl ItemVariations {
         }
 
         /* old VarIdxes -> full encoding_row mapping */
-        let mut front_mapping: FnvHashMap<u32, Vec<i32>> = FnvHashMap::default();
+        let mut front_mapping: FastHashMap<u32, Vec<i32>> = FastHashMap::default();
         let mut start_row = 0;
         let mut encoding_objs = Vec::new();
 
         /* delta_rows map, used for filtering out duplicate rows */
-        let mut delta_rows_map: FnvHashMap<Vec<i32>, bool> = FnvHashMap::default();
+        let mut delta_rows_map: FastHashMap<Vec<i32>, bool> = FastHashMap::default();
 
         for major in 0..self.vars.len() {
             /* deltas are stored in tuples(column based), convert them back into items
@@ -1413,7 +1413,7 @@ impl ItemVariations {
             queue_items.len()
         );
 
-        let mut removed_todo_idxes = FnvHashMap::default();
+        let mut removed_todo_idxes = FastHashMap::default();
         while let Some((t, _)) = queue_items.pop_first() {
             let i = t.idx_1();
             let j = t.idx_2();
@@ -1497,10 +1497,10 @@ impl ItemVariations {
     /* compile varidx_map for one VarData subtable (index specified by major) */
     fn compile_varidx_map(
         &mut self,
-        front_mapping: FnvHashMap<u32, Vec<i32>>,
+        front_mapping: FastHashMap<u32, Vec<i32>>,
     ) -> Result<(), SerializeErrorFlags> {
         /* full encoding_row -> new VarIdxes mapping */
-        let mut back_mapping: FnvHashMap<Vec<i32>, u32> = FnvHashMap::default();
+        let mut back_mapping: FastHashMap<Vec<i32>, u32> = FastHashMap::default();
 
         for major in 0..self.encodings.len() {
             let encoding = &mut self.encodings[major];
@@ -1539,7 +1539,7 @@ impl ItemVariations {
         &self.encodings
     }
 
-    pub(crate) fn get_varidx_map(&self) -> &FnvHashMap<u32, u32> {
+    pub(crate) fn get_varidx_map(&self) -> &FastHashMap<u32, u32> {
         &self.varidx_map
     }
 }
@@ -1567,7 +1567,7 @@ fn _cmp_row(a: &Vec<i32>, b: &Vec<i32>) -> Ordering {
 pub(crate) fn itemvariations_to_varstore_bytes(
     item_vars: &ItemVariations,
     axis_order: &[Tag],
-) -> Result<(Vec<u8>, FnvHashMap<u32, u32>), SerializeErrorFlags> {
+) -> Result<(Vec<u8>, FastHashMap<u32, u32>), SerializeErrorFlags> {
     if item_vars.encodings.is_empty() {
         return Ok((Vec::new(), item_vars.varidx_map.clone()));
     }
@@ -1790,8 +1790,8 @@ pub(crate) fn itemvariations_to_varstore_bytes(
 /// For each old variation index in the map, we look it up in the varidx_map to get the new index.
 /// If the old index is not in varidx_map (meaning it was filtered out), we use NO_VARIATIONS_INDEX.
 fn remap_varidx_after_instantiation(
-    varidx_map: &FnvHashMap<u32, u32>,
-    layout_varidx_delta_map: &mut FnvHashMap<u32, (u32, i32)>,
+    varidx_map: &FastHashMap<u32, u32>,
+    layout_varidx_delta_map: &mut FastHashMap<u32, (u32, i32)>,
 ) {
     // varidx_map is empty which means varstore is empty after instantiation,
     // no variations, map all varidx to NO_VARIATIONS_INDEX (typically 0xFFFFFFFF or similar).
@@ -2016,7 +2016,7 @@ pub fn subset_itemvarstore_with_instancing(
     keep_empty: bool,
     optimize: bool,
     use_no_variation_idx: bool,
-) -> Result<(Vec<u8>, FnvHashMap<u32, u32>), SerializeErrorFlags> {
+) -> Result<(Vec<u8>, FastHashMap<u32, u32>), SerializeErrorFlags> {
     log::debug!(
         "Instancing ItemVariationStore with location: {:?}",
         plan.axes_location
@@ -2422,7 +2422,7 @@ fn collect_region_refs(
 pub(crate) struct DeltaSetIndexMapSerializePlan<'a> {
     outer_bit_count: u8,
     inner_bit_count: u8,
-    output_map: &'a FnvHashMap<u32, u32>,
+    output_map: &'a FastHashMap<u32, u32>,
     map_count: u32,
     missing_entry_value: u32,
 }
@@ -2431,7 +2431,7 @@ impl<'a> DeltaSetIndexMapSerializePlan<'a> {
     pub(crate) fn new(
         outer_bit_count: u8,
         inner_bit_count: u8,
-        output_map: &'a FnvHashMap<u32, u32>,
+        output_map: &'a FastHashMap<u32, u32>,
         map_count: u32,
     ) -> Self {
         Self {
@@ -2456,7 +2456,7 @@ impl<'a> DeltaSetIndexMapSerializePlan<'a> {
         self.inner_bit_count
     }
 
-    pub(crate) fn output_map(&self) -> &'a FnvHashMap<u32, u32> {
+    pub(crate) fn output_map(&self) -> &'a FastHashMap<u32, u32> {
         self.output_map
     }
 
@@ -2667,8 +2667,8 @@ mod test {
             0x1, 0x0, 0x5, 0x0, 0x4, 0x7, 0x5, 0x6,
         ];
         let hvar_table = Hvar::read(FontData::new(&HVAR_DATA)).unwrap();
-        let axis_idx_tag_map: FnvHashMap<usize, Tag> =
-            FnvHashMap::from_iter([(0, Tag::new(b"wght")), (1, Tag::new(b"opsz"))]);
+        let axis_idx_tag_map: FastHashMap<usize, Tag> =
+            FastHashMap::from_iter([(0, Tag::new(b"wght")), (1, Tag::new(b"opsz"))]);
         let src_var_store = hvar_table
             .item_variation_store()
             .expect("HVAR table should contain item variation store");
@@ -2678,9 +2678,9 @@ mod test {
         // Comment in Harfbuzz test says "partial instancing wght=300:800", but axis_tag is actually
         // opsz at that point in the code, oops.
         let normalized_axes_location =
-            FnvHashMap::from_iter([(Tag::new(b"opsz"), Triple::new(-0.512817, 0.0, 0.7000120))]);
+            FastHashMap::from_iter([(Tag::new(b"opsz"), Triple::new(-0.512817, 0.0, 0.7000120))]);
         let axes_triple_distances =
-            FnvHashMap::from_iter([(Tag::new(b"opsz"), TripleDistances::new(200.0, 500.0))]);
+            FastHashMap::from_iter([(Tag::new(b"opsz"), TripleDistances::new(200.0, 500.0))]);
         item_vars
             .instantiate_tuple_vars(&normalized_axes_location, &axes_triple_distances)
             .expect("Instantiation should succeed");
@@ -2710,7 +2710,7 @@ mod test {
         ];
         let cvar = Cvar::read(FontData::new(&CVAR_DATA)).unwrap();
         let vardata = cvar.variation_data(1).unwrap();
-        let axes_map = FnvHashMap::from_iter([(0, axis_tag)]);
+        let axes_map = FastHashMap::from_iter([(0, axis_tag)]);
         let mut tuple_variations = TupleVariations::from_cvar(vardata, 65, &axes_map).unwrap();
         assert_eq!(tuple_variations.tuple_vars.len(), 2);
         for var in tuple_variations.tuple_vars.iter() {
@@ -2752,9 +2752,9 @@ mod test {
 
         /* partial instancing wght=300:800 */
         let normalized_axes_location =
-            FnvHashMap::from_iter([(axis_tag, Triple::new(-0.512817, 0.0, 0.700012))]);
+            FastHashMap::from_iter([(axis_tag, Triple::new(-0.512817, 0.0, 0.700012))]);
         let axes_triple_distances =
-            FnvHashMap::from_iter([(axis_tag, TripleDistances::new(1.0, 1.0))]);
+            FastHashMap::from_iter([(axis_tag, TripleDistances::new(1.0, 1.0))]);
         tuple_variations
             .instantiate(
                 &normalized_axes_location,

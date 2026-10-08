@@ -1,7 +1,7 @@
 //! impl subset() for STAT table
 
 use crate::{
-    fnv::FnvHashMap, offset::SerializeSubset, serialize::SerializeErrorFlags,
+    FastHashMap, offset::SerializeSubset, serialize::SerializeErrorFlags,
     variations::solver::Triple, NameIdClosure, Plan, Subset, SubsetError, SubsetTable,
 };
 use font_types::{NameId, Offset16, Offset32};
@@ -184,7 +184,7 @@ impl<'a> SubsetTable<'a> for Vec<AxisValue<'a>> {
 fn axis_value_is_outside_axis_range(
     axis_tag: Tag,
     axis_value: f32,
-    user_axes_location: &FnvHashMap<Tag, Triple>,
+    user_axes_location: &FastHashMap<Tag, Triple>,
 ) -> bool {
     if !user_axes_location.contains_key(&axis_tag) {
         return false;
@@ -197,7 +197,7 @@ fn axis_value_is_outside_axis_range(
 
 fn should_keep_f1(
     axis_value: &AxisValueFormat1,
-    user_axes_location: &FnvHashMap<Tag, Triple>,
+    user_axes_location: &FastHashMap<Tag, Triple>,
     axis_records: &[AxisRecord],
 ) -> bool {
     let axis_value_f32 = axis_value.value().to_f32();
@@ -212,7 +212,7 @@ fn should_keep_f1(
 
 fn should_keep_f2(
     axis_value: &AxisValueFormat2,
-    user_axes_location: &FnvHashMap<Tag, Triple>,
+    user_axes_location: &FastHashMap<Tag, Triple>,
     axis_records: &[AxisRecord],
 ) -> bool {
     let axis_value_f32 = axis_value.nominal_value().to_f32();
@@ -227,7 +227,7 @@ fn should_keep_f2(
 
 fn should_keep_f3(
     axis_value: &AxisValueFormat3,
-    user_axes_location: &FnvHashMap<Tag, Triple>,
+    user_axes_location: &FastHashMap<Tag, Triple>,
     axis_records: &[AxisRecord],
 ) -> bool {
     let axis_value_f32 = axis_value.value().to_f32();
@@ -242,7 +242,7 @@ fn should_keep_f3(
 
 fn should_keep_f4(
     axis_value: &AxisValueFormat4,
-    user_axes_location: &FnvHashMap<Tag, Triple>,
+    user_axes_location: &FastHashMap<Tag, Triple>,
     axis_records: &[AxisRecord],
 ) -> bool {
     for axis_value in axis_value.axis_values() {

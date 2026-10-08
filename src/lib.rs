@@ -8,7 +8,6 @@ mod colr;
 mod cpal;
 mod cvar;
 mod deltas;
-mod fnv;
 mod fvar;
 mod gdef;
 mod glyf_loca;
@@ -68,7 +67,6 @@ pub use parsing_util::{
 };
 use unicode_closure::unicode_closure;
 
-use fnv::FnvHashMap;
 use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::{
     raw::{
@@ -133,6 +131,8 @@ pub use write_fonts::read::{
     types::{GlyphId, Tag},
     FontRef,
 };
+
+type FastHashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
 
 const MAX_COMPOSITE_OPERATIONS_PER_GLYPH: u8 = 64;
 const MAX_NESTING_LEVEL: u8 = 64;
@@ -364,11 +364,11 @@ pub struct Plan {
     glyphset_colred: IntSet<GlyphId>,
     glyphset: IntSet<GlyphId>,
     /// Old->New glyph id mapping,
-    glyph_map: FnvHashMap<GlyphId, GlyphId>,
+    glyph_map: FastHashMap<GlyphId, GlyphId>,
     // Old->New glyph id (in glyph_set_gsub) mapping
     glyph_map_gsub: Vec<GlyphId>,
     /// New->Old glyph id mapping,
-    reverse_glyph_map: FnvHashMap<GlyphId, GlyphId>,
+    reverse_glyph_map: FastHashMap<GlyphId, GlyphId>,
 
     new_to_old_gid_list: Vec<(GlyphId, GlyphId)>,
 
@@ -385,20 +385,20 @@ pub struct Plan {
     layout_features: IntSet<Tag>,
 
     //active old->new feature index map after removing redundant langsys and prune_features
-    gsub_features: FnvHashMap<u16, u16>,
-    gpos_features: FnvHashMap<u16, u16>,
+    gsub_features: FastHashMap<u16, u16>,
+    gpos_features: FastHashMap<u16, u16>,
 
     //active features(with duplicates) old->new feature index map, used by Script/FeatureVariations
-    gsub_features_w_duplicates: FnvHashMap<u16, u16>,
-    gpos_features_w_duplicates: FnvHashMap<u16, u16>,
+    gsub_features_w_duplicates: FastHashMap<u16, u16>,
+    gpos_features_w_duplicates: FastHashMap<u16, u16>,
 
     // active feature variation records/condition index with variations
-    gsub_feature_record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
-    gpos_feature_record_cond_idx_map: FnvHashMap<u16, IntSet<u16>>,
+    gsub_feature_record_cond_idx_map: FastHashMap<u16, IntSet<u16>>,
+    gpos_feature_record_cond_idx_map: FastHashMap<u16, IntSet<u16>>,
 
     // feature index -> substituted lookup indices collected from feature variations
-    gsub_feature_substitutes_map: FnvHashMap<u16, IntSet<u16>>,
-    gpos_feature_substitutes_map: FnvHashMap<u16, IntSet<u16>>,
+    gsub_feature_substitutes_map: FastHashMap<u16, IntSet<u16>>,
+    gpos_feature_substitutes_map: FastHashMap<u16, IntSet<u16>>,
 
     // old feature_indexes set, used to reinstate the old features
     gsub_old_features: IntSet<u16>,
@@ -406,79 +406,79 @@ pub struct Plan {
 
     //feature_index->pair of (address of old feature, feature tag), used for inserting a catch all record
     //if necessary
-    gsub_old_feature_idx_tag_map: FnvHashMap<usize, (Tag, Offset16)>,
-    gpos_old_feature_idx_tag_map: FnvHashMap<usize, (Tag, Offset16)>,
+    gsub_old_feature_idx_tag_map: FastHashMap<usize, (Tag, Offset16)>,
+    gpos_old_feature_idx_tag_map: FastHashMap<usize, (Tag, Offset16)>,
 
     // active old->new lookup index map
-    gsub_lookups: FnvHashMap<u16, u16>,
-    gpos_lookups: FnvHashMap<u16, u16>,
+    gsub_lookups: FastHashMap<u16, u16>,
+    gpos_lookups: FastHashMap<u16, u16>,
 
     // active script-langsys
-    gsub_script_langsys: FnvHashMap<u16, IntSet<u16>>,
-    gpos_script_langsys: FnvHashMap<u16, IntSet<u16>>,
+    gsub_script_langsys: FastHashMap<u16, IntSet<u16>>,
+    gpos_script_langsys: FastHashMap<u16, IntSet<u16>>,
 
     // used_mark_sets mapping: old->new
-    used_mark_sets_map: FnvHashMap<u16, u16>,
+    used_mark_sets_map: FastHashMap<u16, u16>,
 
     //old->new colrv1 layer index map
-    colrv1_layers: FnvHashMap<u32, u32>,
+    colrv1_layers: FastHashMap<u32, u32>,
     //old->new CPAL palette index map
-    colr_palettes: FnvHashMap<u16, u16>,
+    colr_palettes: FastHashMap<u16, u16>,
     // COLR varstore retained varidx mapping
     colr_varstore_inner_maps: Vec<IncBiMap>,
     // COLR table old variation index -> (New varidx, new delta) mapping
-    colr_varidx_delta_map: FnvHashMap<u32, (u32, F48Dot16)>,
+    colr_varidx_delta_map: FastHashMap<u32, (u32, F48Dot16)>,
     // COLR table new delta set index -> new var index mapping
     // Wrapped in RefCell to allow mutation during instantiation
-    colr_new_deltaset_idx_varidx_map: RefCell<FnvHashMap<u32, u32>>,
+    colr_new_deltaset_idx_varidx_map: RefCell<FastHashMap<u32, u32>>,
     // COLR table old delta set index -> new delta set index mapping
-    colr_old_to_new_deltaset_idx_map: FnvHashMap<u32, u32>,
+    colr_old_to_new_deltaset_idx_map: FastHashMap<u32, u32>,
 
     os2_info: Os2Info,
 
     //BASE table old variation index -> (New varidx, new delta) mapping
-    base_varidx_delta_map: FnvHashMap<u32, (u32, i32)>,
+    base_varidx_delta_map: FastHashMap<u32, (u32, i32)>,
     //BASE table varstore retained varidx mapping
     base_varstore_inner_maps: Vec<IncBiMap>,
 
     //Old layout item variation index -> (New varidx, delta) mapping
     // Wrapped in RefCell to allow mutation during instantiation
-    layout_varidx_delta_map: RefCell<FnvHashMap<u32, (u32, i32)>>,
+    layout_varidx_delta_map: RefCell<FastHashMap<u32, (u32, i32)>>,
     //GDEF table varstore retained varidx mapping
     gdef_varstore_inner_maps: Vec<IncBiMap>,
 
     // normalized axes range map
-    axes_location: FnvHashMap<Tag, Triple>,
+    axes_location: FastHashMap<Tag, Triple>,
     normalized_coords: Vec<F2Dot14>,
     normalized_coords_16_16: Vec<F2Dot14>,
     //map: new_gid -> contour points vector
-    new_gid_contour_points_map: FnvHashMap<GlyphId, ContourPoints>,
+    new_gid_contour_points_map: FastHashMap<GlyphId, ContourPoints>,
     // new gids set for composite glyphs
     composite_new_gids: IntSet<GlyphId>,
-    new_gid_instance_deltas_map: FnvHashMap<GlyphId, Vec<Point<f32>>>,
+    new_gid_instance_deltas_map: FastHashMap<GlyphId, Vec<Point<f32>>>,
     // hmtx metrics map: new gid->(advance, lsb)
-    hmtx_map: RefCell<FnvHashMap<GlyphId, (u16, i16)>>,
+    hmtx_map: RefCell<FastHashMap<GlyphId, (u16, i16)>>,
     // vmtx metrics map: new gid->(advance, lsb)
-    vmtx_map: RefCell<FnvHashMap<GlyphId, (u16, i16)>>,
+    vmtx_map: RefCell<FastHashMap<GlyphId, (u16, i16)>>,
     //boundsWidth map: new gid->boundsWidth, boundWidth=xMax - xMin; _vec kept for HB compat
-    bounds_width_vec: RefCell<FnvHashMap<GlyphId, u32>>,
+    bounds_width_vec: RefCell<FastHashMap<GlyphId, u32>>,
     //boundsHeight map: new gid->boundsHeight, boundsHeight=yMax - yMin
-    bounds_height_vec: RefCell<FnvHashMap<GlyphId, u32>>,
+    bounds_height_vec: RefCell<FastHashMap<GlyphId, u32>>,
 
     // user specified axes range map
-    user_axes_location: FnvHashMap<Tag, Triple>,
-    axes_triple_distances: FnvHashMap<Tag, TripleDistances>,
+    user_axes_location: FastHashMap<Tag, Triple>,
+    axes_triple_distances: FastHashMap<Tag, TripleDistances>,
     pinned_at_default: bool,
     all_axes_pinned: bool,
 
     //retained old axis index -> new axis index mapping in fvar axis array
-    axes_index_map: FnvHashMap<usize, usize>,
+    axes_index_map: FastHashMap<usize, usize>,
     axis_tags: Vec<Tag>,
-    axes_old_index_tag_map: FnvHashMap<usize, Tag>,
+    axes_old_index_tag_map: FastHashMap<usize, Tag>,
 
     head_maxp_info: RefCell<HeadMaxpInfo>,
 
-    mvar_entries: FnvHashMap<Tag, f32>,
+    mvar_entries: FastHashMap<Tag, f32>,
 }
 
 #[derive(Default)]
@@ -997,7 +997,7 @@ impl Plan {
                 };
 
                 let mut delta_set_indices = IntSet::empty();
-                let mut deltaset_idx_var_idx_map = FnvHashMap::default();
+                let mut deltaset_idx_var_idx_map = FastHashMap::default();
                 // when a DeltaSetIndexMap is included, collected variation indices are actually delta set indices,
                 // we need to map them into variation indices
                 if let Some(var_index_map) = &var_index_map {
@@ -1443,7 +1443,7 @@ fn remap_variation_indices(
     normalized_coords: &[F2Dot14],
     calculate_delta: bool,
     no_variations: bool,
-    varidx_delta_map: &mut FnvHashMap<u32, (u32, i32)>,
+    varidx_delta_map: &mut FastHashMap<u32, (u32, i32)>,
 ) {
     let vardata_count = var_store.item_variation_data_count() as u32;
     if vardata_count == 0 || varidx_set.is_empty() {
@@ -1495,7 +1495,7 @@ fn remap_variation_indices_float(
     normalized_coords: &[F2Dot14],
     calculate_delta: bool,
     no_variations: bool,
-    varidx_delta_map: &mut FnvHashMap<u32, (u32, F48Dot16)>,
+    varidx_delta_map: &mut FastHashMap<u32, (u32, F48Dot16)>,
 ) {
     let vardata_count = var_store.item_variation_data_count() as u32;
     if vardata_count == 0 || varidx_set.is_empty() {
@@ -1562,20 +1562,20 @@ fn generate_varstore_inner_maps(
     }
 }
 
-type DeltaSetIdxVarIdxMap = FnvHashMap<u32, u32>;
+type DeltaSetIdxVarIdxMap = FastHashMap<u32, u32>;
 
 fn remap_delta_set_indices(
     delta_set_indices: &IntSet<u32>,
     deltaset_idx_var_idx_map: &DeltaSetIdxVarIdxMap,
-    varidx_delta_map: &FnvHashMap<u32, (u32, F48Dot16)>,
+    varidx_delta_map: &FastHashMap<u32, (u32, F48Dot16)>,
 ) -> (
     DeltaSetIdxVarIdxMap,
     DeltaSetIdxVarIdxMap,
-    FnvHashMap<u32, (u32, F48Dot16)>,
+    FastHashMap<u32, (u32, F48Dot16)>,
 ) {
-    let mut new_deltaset_idx_varidx_map = FnvHashMap::default();
-    let mut old_to_new_deltaset_idx_map = FnvHashMap::default();
-    let mut deltaset_idx_delta_map = FnvHashMap::default();
+    let mut new_deltaset_idx_varidx_map = FastHashMap::default();
+    let mut old_to_new_deltaset_idx_map = FastHashMap::default();
+    let mut deltaset_idx_delta_map = FastHashMap::default();
 
     for (new_deltaset_idx, deltaset_idx) in delta_set_indices.iter().enumerate() {
         let Some(var_idx) = deltaset_idx_var_idx_map.get(&deltaset_idx) else {
@@ -1653,7 +1653,7 @@ fn get_font_num_glyphs(font: &FontRef) -> usize {
 
 pub(crate) fn remap_indices<T: Domain + std::cmp::Eq + std::hash::Hash + TryFrom<usize>>(
     indices: IntSet<T>,
-) -> FnvHashMap<T, T> {
+) -> FastHashMap<T, T> {
     indices
         .iter()
         .enumerate()
@@ -1664,7 +1664,7 @@ pub(crate) fn remap_indices<T: Domain + std::cmp::Eq + std::hash::Hash + TryFrom
         .collect()
 }
 
-fn remap_palette_indices(indices: IntSet<u16>) -> FnvHashMap<u16, u16> {
+fn remap_palette_indices(indices: IntSet<u16>) -> FastHashMap<u16, u16> {
     indices
         .iter()
         .enumerate()
@@ -1742,14 +1742,14 @@ pub(crate) trait LayoutClosure {
         &self,
         lookup_indices: &IntSet<u16>,
         feature_indices: IntSet<u16>,
-    ) -> FnvHashMap<u16, u16>;
+    ) -> FastHashMap<u16, u16>;
 
     //remove unreferenced langsys and return (script->langsys mapping, retained feature indices)
     fn prune_langsys(
         &self,
-        duplicate_feature_index_map: &FnvHashMap<u16, u16>,
+        duplicate_feature_index_map: &FastHashMap<u16, u16>,
         layout_scripts: &IntSet<Tag>,
-    ) -> (FnvHashMap<u16, IntSet<u16>>, IntSet<u16>);
+    ) -> (FastHashMap<u16, IntSet<u16>>, IntSet<u16>);
 
     fn closure_glyphs_lookups_features(&self, plan: &mut Plan) -> Result<(), SubsetError>;
 }

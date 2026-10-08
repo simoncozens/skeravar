@@ -7,7 +7,7 @@ mod single_subst;
 
 use crate::{
     collect_features_with_retained_subs, find_duplicate_features,
-    fnv::FnvHashMap,
+    FastHashMap,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, Serializer},
@@ -77,18 +77,18 @@ impl LayoutClosure for Gsub<'_> {
         &self,
         lookup_indices: &IntSet<u16>,
         feature_indices: IntSet<u16>,
-    ) -> FnvHashMap<u16, u16> {
+    ) -> FastHashMap<u16, u16> {
         let Ok(feature_list) = self.feature_list() else {
-            return FnvHashMap::default();
+            return FastHashMap::default();
         };
         find_duplicate_features(&feature_list, lookup_indices, feature_indices)
     }
 
     fn prune_langsys(
         &self,
-        duplicate_feature_index_map: &FnvHashMap<u16, u16>,
+        duplicate_feature_index_map: &FastHashMap<u16, u16>,
         layout_scripts: &IntSet<Tag>,
-    ) -> (FnvHashMap<u16, IntSet<u16>>, IntSet<u16>) {
+    ) -> (FastHashMap<u16, IntSet<u16>>, IntSet<u16>) {
         let mut c = PruneLangSysContext::new(duplicate_feature_index_map);
         let Ok(script_list) = self.script_list() else {
             return (c.script_langsys_map(), c.feature_indices());
@@ -108,15 +108,15 @@ impl LayoutClosure for Gsub<'_> {
             let mut ctx = CollectFeatureSubstitutesContext {
                 axes_index_tag_map: &plan.axes_old_index_tag_map,
                 axes_location: &plan.axes_location,
-                record_cond_idx_map: FnvHashMap::default(),
+                record_cond_idx_map: FastHashMap::default(),
                 catch_all_record_feature_indices: IntSet::default(),
                 feature_indices: feature_indices.clone(),
                 apply: false,
                 variation_applied: false,
                 universal: false,
                 cur_record_idx: 0,
-                conditionset_map: FnvHashMap::default(),
-                feature_substitutes_lookup_map: FnvHashMap::default(),
+                conditionset_map: FastHashMap::default(),
+                feature_substitutes_lookup_map: FastHashMap::default(),
             };
 
             if let Some(Ok(feature_variations)) = self.feature_variations() {
@@ -202,7 +202,7 @@ impl LayoutClosure for Gsub<'_> {
 fn feature_variation_collect_lookups_gsub(
     gsub: &Gsub,
     feature_indices: &IntSet<u16>,
-    feature_record_cond_idx_map: &FnvHashMap<u16, IntSet<u16>>,
+    feature_record_cond_idx_map: &FastHashMap<u16, IntSet<u16>>,
     lookup_indices: &mut IntSet<u16>,
 ) -> Result<(), SubsetError> {
     let Some(feature_variations) = gsub.feature_variations() else {
@@ -309,7 +309,7 @@ fn subset_gsub(
 }
 
 impl<'a> SubsetTable<'a> for SubstitutionLookup<'_> {
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>);
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
     type Output = ();
     fn subset(
         &self,
@@ -354,7 +354,7 @@ impl<'a> SubsetTable<'a> for SubstitutionLookup<'_> {
 }
 
 impl<'a> SubsetTable<'a> for ExtensionSubtable<'a> {
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>);
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
     type Output = ();
 
     fn subset(
@@ -379,11 +379,11 @@ impl<'a, T> SubsetTable<'a> for ExtensionSubstFormat1<'a, T>
 where
     T: SubsetTable<
             'a,
-            ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>),
+            ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>),
             Output = (),
         > + FontRead<'a, Args = ()>,
 {
-    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FnvHashMap<u16, u16>);
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
     type Output = ();
 
     fn subset(
