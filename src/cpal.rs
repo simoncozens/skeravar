@@ -1,21 +1,18 @@
 //! impl subset() for CPAL table
 
 use crate::{
-    FastHashMap,
     offset::{SerializeCopy, SerializeSubset},
     serialize::{SerializeErrorFlags, Serializer},
-    NameIdClosure, Plan, Subset, SubsetError, SubsetTable,
+    FastHashMap, NameIdClosure, Plan, Subset, SubsetError, SubsetTable,
 };
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::cpal::{ColorRecord, Cpal},
-        types::{BigEndian, NameId},
-        FontRef, Offset, TopLevelTable,
-    },
+use read_fonts::{
+    collections::IntSet,
+    tables::cpal::{ColorRecord, Cpal},
+    types::{BigEndian, NameId},
     types::{FixedSize, Offset32},
-    FontBuilder,
+    FontRef, Offset, TopLevelTable,
 };
+use write_fonts::FontBuilder;
 
 // reference: subset() for CPAL in Harfbuzz:
 // <https://github.com/harfbuzz/harfbuzz/blob/3c02fcd0e8ebd9330634058839941a672f777ac3/src/OT/Color/CPAL/CPAL.hh#L277>
@@ -226,7 +223,7 @@ impl NameIdClosure for Cpal<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::TableProvider;
+    use read_fonts::TableProvider;
     #[test]
     fn test_subset_cpal_retain_all_glyphs() {
         let ttf: &[u8] = include_bytes!("../test-data/fonts/TwemojiMozilla.subset.ttf");

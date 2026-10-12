@@ -1,13 +1,13 @@
 //! impl subset() for hmtx
 
 use crate::{serialize::Serializer, Plan, Subset, SubsetError, SubsetError::SubsetTableError};
-use skrifa::raw::tables::mvar::tags::{HCOF, HCRN, HCRS};
-use write_fonts::{
-    from_obj::ToOwnedTable,
-    read::{tables::hmtx::Hmtx, FontRef, TableProvider, TopLevelTable},
+use read_fonts::{
+    tables::hmtx::Hmtx,
     types::{FWord, GlyphId, UfWord},
-    FontBuilder,
+    FontRef, TableProvider, TopLevelTable,
 };
+use skrifa::raw::tables::mvar::tags::{HCOF, HCRN, HCRS};
+use write_fonts::{from_obj::ToOwnedTable, FontBuilder};
 
 // reference: subset() for hmtx/hhea in harfbuzz
 // https://github.com/harfbuzz/harfbuzz/blob/a070f9ebbe88dc71b248af9731dd49ec93f4e6e6/src/hb-ot-hmtx-table.hh#L214

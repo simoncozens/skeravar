@@ -4,13 +4,14 @@
 //! generate a group of tests to perform, run and then compare the output against the stored expected result
 //!
 
+use read_fonts::{
+    collections::IntSet,
+    types::{NameId, Tag},
+    FontRef,
+};
 use rstest::rstest;
 use skeravar::{subset_font, Plan, SubsetFlags, DEFAULT_DROP_TABLES, DEFAULT_LAYOUT_FEATURES};
 use std::path::PathBuf;
-use write_fonts::{
-    read::{collections::IntSet, FontRef},
-    types::{NameId, Tag},
-};
 
 static TEST_DATA_DIR: &str = "./test-data";
 

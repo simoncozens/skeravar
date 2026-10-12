@@ -4,8 +4,8 @@ use crate::{
     serialize::SerializeErrorFlags, variations::solver::Triple, NameIdClosure, Plan, Subset,
     SubsetError,
 };
+use read_fonts::{tables::fvar::Fvar, types::Fixed};
 use skrifa::raw::{tables::fvar::InstanceRecord, TopLevelTable};
-use write_fonts::{read::tables::fvar::Fvar, types::Fixed};
 
 impl NameIdClosure for Fvar<'_> {
     //TODO: support partial-instancing
@@ -48,7 +48,7 @@ impl Subset for Fvar<'_> {
     fn subset(
         &self,
         plan: &Plan,
-        _font: &write_fonts::read::FontRef,
+        _font: &read_fonts::FontRef,
         s: &mut crate::serialize::Serializer,
         _builder: &mut write_fonts::FontBuilder,
     ) -> Result<(), crate::SubsetError> {
@@ -175,8 +175,8 @@ mod test {
     use crate::{parse_instancing_spec, subset_font, SubsetFlags};
 
     use super::*;
+    use read_fonts::{types::NameId, FontRef, TableProvider};
     use skrifa::{raw::collections::IntSet, MetadataProvider};
-    use write_fonts::read::{types::NameId, FontRef, TableProvider};
     #[test]
     fn test_nameid_closure() {
         let mut plan = Plan::default();

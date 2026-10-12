@@ -1,4 +1,4 @@
-use crate::{FastHashMap, variations::solver::Triple, Plan, SubsetError};
+use crate::{variations::solver::Triple, FastHashMap, Plan, SubsetError};
 use skrifa::{
     raw::{
         tables::stat::{AxisValue, AxisValueTableFlags, Stat},

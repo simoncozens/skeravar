@@ -67,6 +67,47 @@ pub use parsing_util::{
 };
 use unicode_closure::unicode_closure;
 
+use read_fonts::{
+    collections::int_set::Domain,
+    limits::MAX_RECURSION_DEPTH,
+    tables::{
+        avar::Avar,
+        base::Base,
+        cbdt::Cbdt,
+        cblc::Cblc,
+        cff::Cff,
+        cff2::Cff2,
+        cmap::{Cmap, CmapSubtable, PlatformId},
+        colr::Colr,
+        cpal::Cpal,
+        cvar::Cvar,
+        gasp,
+        gdef::Gdef,
+        glyf::{Glyf, Glyph},
+        gpos::Gpos,
+        gsub::Gsub,
+        gvar::Gvar,
+        hdmx::Hdmx,
+        head::Head,
+        hhea::Hhea,
+        hmtx::Hmtx,
+        hvar::Hvar,
+        loca::Loca,
+        maxp::Maxp,
+        mvar::Mvar,
+        name::Name,
+        os2::Os2,
+        post::Post,
+        sbix::Sbix,
+        stat::Stat,
+        vhea::Vhea,
+        vmtx::Vmtx,
+        vorg::Vorg,
+        vvar::Vvar,
+    },
+    types::{F2Dot14, NameId},
+    TableProvider, TopLevelTable,
+};
 use serialize::{SerializeErrorFlags, Serializer};
 use skrifa::{
     raw::{
@@ -81,53 +122,10 @@ use skrifa::{
     MetadataProvider,
 };
 use thiserror::Error;
-use write_fonts::{
-    read::{
-        collections::int_set::Domain,
-        limits::MAX_RECURSION_DEPTH,
-        tables::{
-            avar::Avar,
-            base::Base,
-            cbdt::Cbdt,
-            cblc::Cblc,
-            cff::Cff,
-            cff2::Cff2,
-            cmap::{Cmap, CmapSubtable, PlatformId},
-            colr::Colr,
-            cpal::Cpal,
-            cvar::Cvar,
-            gasp,
-            gdef::Gdef,
-            glyf::{Glyf, Glyph},
-            gpos::Gpos,
-            gsub::Gsub,
-            gvar::Gvar,
-            hdmx::Hdmx,
-            head::Head,
-            hhea::Hhea,
-            hmtx::Hmtx,
-            hvar::Hvar,
-            loca::Loca,
-            maxp::Maxp,
-            mvar::Mvar,
-            name::Name,
-            os2::Os2,
-            post::Post,
-            sbix::Sbix,
-            stat::Stat,
-            vhea::Vhea,
-            vmtx::Vmtx,
-            vorg::Vorg,
-            vvar::Vvar,
-        },
-        types::{F2Dot14, NameId},
-        TableProvider, TopLevelTable,
-    },
-    FontBuilder,
-};
+use write_fonts::FontBuilder;
 
 // Re-export any public types we depend upon
-pub use write_fonts::read::{
+pub use read_fonts::{
     collections::IntSet,
     types::{GlyphId, Tag},
     FontRef,

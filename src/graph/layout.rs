@@ -1,10 +1,10 @@
 //! Read layout tables in a graph
 use crate::{
-    FastHashMap,
     graph::{Graph, Parents, RepackError},
     serialize::{Link, LinkWidth, ObjIdx},
+    FastHashMap,
 };
-use write_fonts::types::{FixedSize, Offset16, Scalar};
+use read_fonts::types::{FixedSize, Offset16, Scalar};
 
 pub(super) struct DataBytes<'a> {
     bytes: &'a mut [u8],

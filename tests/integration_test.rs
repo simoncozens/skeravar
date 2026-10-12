@@ -7,6 +7,11 @@
 //! environment variable.
 
 use libtest_mimic::{Arguments, Trial};
+use read_fonts::{
+    collections::{int_set::Domain, IntSet},
+    types::{NameId, Tag},
+    FontRef,
+};
 use similar::TextDiff;
 use skeravar::{parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
 use skrifa::GlyphId;
@@ -19,13 +24,6 @@ use std::{
     process::{Command, Stdio},
 };
 use tempfile::Builder;
-use write_fonts::{
-    read::{
-        collections::{int_set::Domain, IntSet},
-        FontRef,
-    },
-    types::{NameId, Tag},
-};
 
 static TEST_DATA_DIR: &str = "./test-data";
 static GEN_EXPECTED_OUTPUTS_VAR: &str = "GEN_EXPECTED_OUTPUTS";

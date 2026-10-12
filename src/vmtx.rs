@@ -1,13 +1,13 @@
 //! impl subset() for vmtx
 
 use crate::{serialize::Serializer, Plan, Subset, SubsetError, SubsetError::SubsetTableError};
-use skrifa::raw::tables::mvar::tags::{VCOF, VCRN, VCRS};
-use write_fonts::{
-    from_obj::ToOwnedTable,
-    read::{tables::vmtx::Vmtx, FontRef, TableProvider, TopLevelTable},
+use read_fonts::{
+    tables::vmtx::Vmtx,
     types::{FWord, GlyphId, UfWord},
-    FontBuilder,
+    FontRef, TableProvider, TopLevelTable,
 };
+use skrifa::raw::tables::mvar::tags::{VCOF, VCRN, VCRS};
+use write_fonts::{from_obj::ToOwnedTable, FontBuilder};
 
 // reference: subset() for vmtx/vhea in harfbuzz
 // https://github.com/harfbuzz/harfbuzz/blob/a070f9ebbe88dc71b248af9731dd49ec93f4e6e6/src/hb-ot-hmtx-table.hh#L214

@@ -5,16 +5,14 @@ use crate::{
     serialize::{SerializeErrorFlags, Serializer},
     CollectVariationIndices, Plan, SubsetTable,
 };
+use read_fonts::{
+    collections::IntSet,
+    tables::gpos::{ValueFormat, ValueRecord},
+    types::Offset16,
+};
 use skrifa::raw::{
     tables::{gpos::DeviceOrVariationIndex, variations::NO_VARIATION_INDEX},
     ReadError,
-};
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::gpos::{ValueFormat, ValueRecord},
-    },
-    types::Offset16,
 };
 
 pub(crate) fn compute_effective_format(

@@ -6,15 +6,13 @@ use crate::{
     serialize::{SerializeErrorFlags, Serializer},
     CollectVariationIndices, Plan, SubsetFlags, SubsetTable,
 };
-use skrifa::raw::tables::gpos::DeviceOrVariationIndex;
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::gpos::{AnchorFormat1, AnchorFormat2, AnchorFormat3, AnchorTable},
-        FontData, MinByteRange,
-    },
+use read_fonts::{
+    collections::IntSet,
+    tables::gpos::{AnchorFormat1, AnchorFormat2, AnchorFormat3, AnchorTable},
     types::Offset16,
+    FontData, MinByteRange,
 };
+use skrifa::raw::tables::gpos::DeviceOrVariationIndex;
 
 impl<'a> SubsetTable<'a> for AnchorTable<'a> {
     type ArgsForSubset = FontData<'a>;

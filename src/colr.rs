@@ -1,38 +1,34 @@
 //! impl subset() for COLR
 use crate::{
-    FastHashMap,
     offset::{SerializeCopy, SerializeSubset},
     offset_array::SubsetOffsetArray,
     serialize::{SerializeErrorFlags, Serializer},
     variations::{itemvariations_to_varstore_bytes, DeltaSetIndexMapSerializePlan, ItemVariations},
-    Plan, Subset, SubsetError, SubsetTable,
+    FastHashMap, Plan, Subset, SubsetError, SubsetTable,
 };
 use font_types::{F2Dot14, FWord};
-use skrifa::raw::{tables::colr::Affine2x3, ResolveOffset};
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{
-            colr::{
-                BaseGlyph, BaseGlyphList, BaseGlyphPaint, ClipBox, ClipBoxFormat1, ClipBoxFormat2,
-                ClipList, ColorLine, ColorStop, Colr, Layer, LayerList, Paint, PaintColrGlyph,
-                PaintColrLayers, PaintComposite, PaintGlyph, PaintLinearGradient,
-                PaintRadialGradient, PaintRotate, PaintRotateAroundCenter, PaintScale,
-                PaintScaleAroundCenter, PaintScaleUniform, PaintScaleUniformAroundCenter,
-                PaintSkew, PaintSkewAroundCenter, PaintSolid, PaintSweepGradient, PaintTransform,
-                PaintTranslate, PaintVarLinearGradient, PaintVarRadialGradient, PaintVarRotate,
-                PaintVarRotateAroundCenter, PaintVarScale, PaintVarScaleAroundCenter,
-                PaintVarScaleUniform, PaintVarScaleUniformAroundCenter, PaintVarSkew,
-                PaintVarSkewAroundCenter, PaintVarSolid, PaintVarSweepGradient, PaintVarTransform,
-                PaintVarTranslate, VarAffine2x3, VarColorLine, VarColorStop,
-            },
-            variations::{DeltaSetIndexMap, NO_VARIATION_INDEX},
+use read_fonts::{
+    collections::IntSet,
+    tables::{
+        colr::{
+            BaseGlyph, BaseGlyphList, BaseGlyphPaint, ClipBox, ClipBoxFormat1, ClipBoxFormat2,
+            ClipList, ColorLine, ColorStop, Colr, Layer, LayerList, Paint, PaintColrGlyph,
+            PaintColrLayers, PaintComposite, PaintGlyph, PaintLinearGradient, PaintRadialGradient,
+            PaintRotate, PaintRotateAroundCenter, PaintScale, PaintScaleAroundCenter,
+            PaintScaleUniform, PaintScaleUniformAroundCenter, PaintSkew, PaintSkewAroundCenter,
+            PaintSolid, PaintSweepGradient, PaintTransform, PaintTranslate, PaintVarLinearGradient,
+            PaintVarRadialGradient, PaintVarRotate, PaintVarRotateAroundCenter, PaintVarScale,
+            PaintVarScaleAroundCenter, PaintVarScaleUniform, PaintVarScaleUniformAroundCenter,
+            PaintVarSkew, PaintVarSkewAroundCenter, PaintVarSolid, PaintVarSweepGradient,
+            PaintVarTransform, PaintVarTranslate, VarAffine2x3, VarColorLine, VarColorStop,
         },
-        FontRef, MinByteRange, TopLevelTable,
+        variations::{DeltaSetIndexMap, NO_VARIATION_INDEX},
     },
     types::{F48Dot16, GlyphId, Offset24, Offset32},
-    FontBuilder,
+    FontRef, MinByteRange, TopLevelTable,
 };
+use skrifa::raw::{tables::colr::Affine2x3, ResolveOffset};
+use write_fonts::FontBuilder;
 
 /// Helper for applying deltas during COLR instantiation
 #[derive(Clone, Copy)]
@@ -1907,7 +1903,7 @@ fn downgrade_to_v0(base_glyph_list: Option<&BaseGlyphList>, plan: &Plan) -> bool
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::{read::TableProvider, types::GlyphId};
+    use read_fonts::{types::GlyphId, TableProvider};
     #[test]
     fn test_subset_colr_retain_all() {
         let ttf: &[u8] = include_bytes!("../test-data/fonts/TwemojiMozilla.subset.ttf");

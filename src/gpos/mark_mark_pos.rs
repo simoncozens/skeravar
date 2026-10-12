@@ -1,13 +1,12 @@
 //! impl subset() for MarkMarkPos subtable
 use crate::{
-    FastHashMap,
     gpos::mark_array::{collect_retained_mark_varidx_and_classes, get_mark_class_map},
     layout::{for_each_intersected_coverage_index, intersected_glyphs_and_indices},
     offset::{SerializeSerialize, SerializeSubset},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    CollectVariationIndices, Plan, SubsetState, SubsetTable,
+    CollectVariationIndices, FastHashMap, Plan, SubsetState, SubsetTable,
 };
-use write_fonts::read::{
+use read_fonts::{
     collections::IntSet,
     tables::{
         gpos::{Mark2Array, Mark2Record, MarkMarkPosFormat1},
@@ -231,11 +230,11 @@ impl<'a> SubsetTable<'a> for Mark2Record<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::{types::GlyphId, FontRef, TableProvider};
+    use read_fonts::{types::GlyphId, FontRef, TableProvider};
 
     #[test]
     fn test_collect_variation_indices_markmarkpos() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../../test-data/fonts/RobotoFlex-Variable.ttf"
@@ -265,7 +264,7 @@ mod test {
 
     #[test]
     fn test_subset_markmark_pos() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"

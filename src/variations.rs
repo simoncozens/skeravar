@@ -7,15 +7,22 @@ use std::{
 };
 
 use crate::{
-    FastHashMap,
     glyf_loca::{ContourPoint, ContourPoints},
     inc_bimap::IncBiMap,
     offset::SerializeSubset,
     serialize::{SerializeErrorFlags, Serializer},
     variations::solver::{rebase_tent, Triple, TripleDistances},
-    Plan, Serialize, SubsetTable,
+    FastHashMap, Plan, Serialize, SubsetTable,
 };
 use font_types::{FixedSize, Point};
+use read_fonts::{
+    collections::IntSet,
+    tables::variations::{
+        DeltaSetIndexMap, ItemVariationData, ItemVariationStore, VariationRegionList,
+        NO_VARIATION_INDEX,
+    },
+    types::{BigEndian, F2Dot14, Offset32},
+};
 use skrifa::{
     raw::tables::{
         cvar::CvtDelta,
@@ -25,15 +32,7 @@ use skrifa::{
     Tag,
 };
 use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::variations::{
-            DeltaSetIndexMap, ItemVariationData, ItemVariationStore, VariationRegionList,
-            NO_VARIATION_INDEX,
-        },
-    },
     tables::gvar::{GlyphDelta as WriteGlyphDelta, GlyphDeltas},
-    types::{BigEndian, F2Dot14, Offset32},
     OtRound,
 };
 

@@ -7,7 +7,6 @@ mod single_subst;
 
 use crate::{
     collect_features_with_retained_subs, find_duplicate_features,
-    FastHashMap,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, Serializer},
@@ -16,21 +15,19 @@ use crate::{
         feature_variation_collect_lookups, CollectFeatureSubstitutesContext,
         FeatureSubstituteCollectionResult,
     },
-    LayoutClosure, NameIdClosure, Plan, PruneLangSysContext, Subset, SubsetError,
+    FastHashMap, LayoutClosure, NameIdClosure, Plan, PruneLangSysContext, Subset, SubsetError,
     SubsetLayoutContext, SubsetState, SubsetTable,
 };
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{
-            gsub::{ExtensionSubstFormat1, ExtensionSubtable, Gsub, SubstitutionLookup},
-            layout::LookupFlag,
-        },
-        types::{Compatible, MajorMinor, Offset16, Offset32, Tag},
-        FontRead, FontRef, TopLevelTable,
+use read_fonts::{
+    collections::IntSet,
+    tables::{
+        gsub::{ExtensionSubstFormat1, ExtensionSubtable, Gsub, SubstitutionLookup},
+        layout::LookupFlag,
     },
-    FontBuilder,
+    types::{Compatible, MajorMinor, Offset16, Offset32, Tag},
+    FontRead, FontRef, TopLevelTable,
 };
+use write_fonts::FontBuilder;
 
 impl NameIdClosure for Gsub<'_> {
     //TODO: support instancing: collect from feature substitutes if exist
@@ -411,7 +408,7 @@ where
 mod test {
     use super::*;
     use font_test_data::closure as test_data;
-    use write_fonts::read::{types::NameId, FontRef, TableProvider};
+    use read_fonts::{types::NameId, FontRef, TableProvider};
 
     #[test]
     fn test_nameid_closure() {

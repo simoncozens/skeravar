@@ -6,19 +6,17 @@ use crate::{
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     FastHashMap, Plan, SubsetState, SubsetTable,
 };
-use write_fonts::{
-    read::{
-        tables::layout::{
-            ChainedClassSequenceRule, ChainedClassSequenceRuleSet, ChainedSequenceContext,
-            ChainedSequenceContextFormat1, ChainedSequenceContextFormat2,
-            ChainedSequenceContextFormat3, ChainedSequenceRule, ChainedSequenceRuleSet,
-            ClassSequenceRule, ClassSequenceRuleSet, CoverageTable, SequenceContext,
-            SequenceContextFormat1, SequenceContextFormat2, SequenceContextFormat3,
-            SequenceLookupRecord, SequenceRule, SequenceRuleSet,
-        },
-        ArrayOfOffsets, FontRef,
+use read_fonts::{
+    tables::layout::{
+        ChainedClassSequenceRule, ChainedClassSequenceRuleSet, ChainedSequenceContext,
+        ChainedSequenceContextFormat1, ChainedSequenceContextFormat2,
+        ChainedSequenceContextFormat3, ChainedSequenceRule, ChainedSequenceRuleSet,
+        ClassSequenceRule, ClassSequenceRuleSet, CoverageTable, SequenceContext,
+        SequenceContextFormat1, SequenceContextFormat2, SequenceContextFormat3,
+        SequenceLookupRecord, SequenceRule, SequenceRuleSet,
     },
     types::{BigEndian, FixedSize, GlyphId, GlyphId16, Offset16},
+    ArrayOfOffsets, FontRef,
 };
 
 impl<'a> SubsetTable<'a> for SequenceContext<'_> {
@@ -877,11 +875,11 @@ impl<'a> SubsetTable<'a> for ChainedSequenceContextFormat3<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::{types::GlyphId, FontRef, TableProvider};
+    use read_fonts::{types::GlyphId, FontRef, TableProvider};
 
     #[test]
     fn test_subset_context_format1() {
-        use write_fonts::read::tables::gsub::SubstitutionSubtables;
+        use read_fonts::tables::gsub::SubstitutionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"
@@ -932,7 +930,7 @@ mod test {
 
     #[test]
     fn test_subset_chained_context_format1() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/gpos_chaining1_multiple_subrules_f1.otf"
@@ -985,7 +983,7 @@ mod test {
 
     #[test]
     fn test_subset_context_format2() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"
@@ -1046,7 +1044,7 @@ mod test {
 
     #[test]
     fn test_subset_chain_context_format2() {
-        use write_fonts::read::tables::gsub::SubstitutionSubtables;
+        use read_fonts::tables::gsub::SubstitutionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"
@@ -1114,7 +1112,7 @@ mod test {
 
     #[test]
     fn test_subset_context_format3() {
-        use write_fonts::read::tables::gsub::SubstitutionSubtables;
+        use read_fonts::tables::gsub::SubstitutionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"
@@ -1168,7 +1166,7 @@ mod test {
 
     #[test]
     fn test_subset_chain_context_format3() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!(
             "../test-data/fonts/NotoNastaliqUrdu-Regular.ttf"
@@ -1247,7 +1245,7 @@ mod test {
     /// to fail the subtable with a READ_ERROR, which dropped the whole table.
     #[test]
     fn test_subset_context_format2_class_past_rule_set_count() {
-        use write_fonts::read::{FontData, FontRead};
+        use read_fonts::{FontData, FontRead};
 
         #[rustfmt::skip]
         let raw_table: [u8; 48] = [
@@ -1284,7 +1282,7 @@ mod test {
     /// Same as above for ChainedSequenceContextFormat2.
     #[test]
     fn test_subset_chain_context_format2_class_past_rule_set_count() {
-        use write_fonts::read::{FontData, FontRead};
+        use read_fonts::{FontData, FontRead};
 
         #[rustfmt::skip]
         let raw_table: [u8; 56] = [

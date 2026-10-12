@@ -4,7 +4,6 @@
 use std::cmp::Ordering;
 
 use crate::{
-    FastHashMap,
     graph::{
         layout::{ExtensionSubtable, Lookup, EXTENSION_TABLE_SIZE},
         ligature_graph::split_ligature_subst,
@@ -13,14 +12,13 @@ use crate::{
         Graph, RepackError,
     },
     serialize::{ObjIdx, Serializer},
+    FastHashMap,
 };
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{gpos::Gpos, gsub::Gsub},
-        TopLevelTable,
-    },
+use read_fonts::{
+    collections::IntSet,
+    tables::{gpos::Gpos, gsub::Gsub},
     types::{FixedSize, Offset16, Tag},
+    TopLevelTable,
 };
 
 const MAX_ITERATIONS: u16 = 500;
@@ -344,7 +342,7 @@ fn find_lookup_indices(graph: &Graph) -> Result<(ObjIdx, FastHashMap<ObjIdx, u32
 
 #[cfg(test)]
 pub(crate) mod test {
-    use write_fonts::{read::tables::layout::CoverageTable, types::GlyphId};
+    use read_fonts::{tables::layout::CoverageTable, types::GlyphId};
 
     use super::*;
     use crate::{

@@ -12,6 +12,19 @@ use crate::{
     SubsetFlags,
 };
 use font_types::{F2Dot14, Point};
+use read_fonts::{
+    tables::{
+        glyf::{
+            Anchor, CompositeGlyph, CompositeGlyphFlags, Glyf,
+            Glyph::{self, Composite, Simple},
+            SimpleGlyph, SimpleGlyphFlags,
+        },
+        head::Head,
+        loca::Loca,
+    },
+    types::GlyphId,
+    FontRef, TableProvider, TopLevelTable,
+};
 use skrifa::{
     prelude::{LocationRef, Size},
     raw::{tables::glyf::CurvePoint, ReadError},
@@ -19,19 +32,6 @@ use skrifa::{
 };
 use write_fonts::{
     from_obj::ToOwnedTable,
-    read::{
-        tables::{
-            glyf::{
-                Anchor, CompositeGlyph, CompositeGlyphFlags, Glyf,
-                Glyph::{self, Composite, Simple},
-                SimpleGlyph, SimpleGlyphFlags,
-            },
-            head::Head,
-            loca::Loca,
-        },
-        types::GlyphId,
-        FontRef, TableProvider, TopLevelTable,
-    },
     tables::glyf::{Bbox, CompositeGlyph as WriteCompositeGlyph},
     FontBuilder, OtRound,
 };

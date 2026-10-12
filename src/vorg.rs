@@ -3,11 +3,8 @@ use crate::{
     serialize::{SerializeErrorFlags, Serializer},
     Plan, Subset, SubsetError,
 };
-use write_fonts::{
-    read::{tables::vorg::Vorg, FontRef, TopLevelTable},
-    types::GlyphId,
-    FontBuilder,
-};
+use read_fonts::{tables::vorg::Vorg, types::GlyphId, FontRef, TopLevelTable};
+use write_fonts::FontBuilder;
 
 use crate::FastHashMap;
 

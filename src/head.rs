@@ -1,7 +1,7 @@
 //! impl subset() for head
 use crate::Plan;
+use read_fonts::tables::head::Head;
 use skrifa::raw::tables::head;
-use write_fonts::read::tables::head::Head;
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct HeadMaxpInfo {

@@ -1,22 +1,19 @@
 //! impl subset() for CursivePos subtable
 
 use crate::{
-    FastHashMap,
     layout::{for_each_intersected_coverage_index, for_each_intersected_glyph_and_index},
     offset::{SerializeSerialize, SerializeSubset},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    CollectVariationIndices, Plan, SubsetState, SubsetTable,
+    CollectVariationIndices, FastHashMap, Plan, SubsetState, SubsetTable,
 };
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{
-            gpos::{CursivePosFormat1, EntryExitRecord},
-            layout::CoverageTable,
-        },
-        FontData, FontRef,
+use read_fonts::{
+    collections::IntSet,
+    tables::{
+        gpos::{CursivePosFormat1, EntryExitRecord},
+        layout::CoverageTable,
     },
     types::Offset16,
+    FontData, FontRef,
 };
 
 impl<'a> SubsetTable<'a> for CursivePosFormat1<'_> {
@@ -141,11 +138,11 @@ impl CollectVariationIndices for CursivePosFormat1<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::{types::GlyphId, FontRef, TableProvider};
+    use read_fonts::{types::GlyphId, FontRef, TableProvider};
 
     #[test]
     fn test_subset_cursive_pos() {
-        use write_fonts::read::tables::gpos::PositionSubtables;
+        use read_fonts::tables::gpos::PositionSubtables;
 
         let font = FontRef::new(include_bytes!("../../test-data/fonts/Amiri-Regular.ttf")).unwrap();
         let gpos_lookups = font.gpos().unwrap().lookup_list().unwrap();

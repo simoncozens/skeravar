@@ -1,10 +1,11 @@
 //! impl subset() for STAT table
 
 use crate::{
-    FastHashMap, offset::SerializeSubset, serialize::SerializeErrorFlags,
-    variations::solver::Triple, NameIdClosure, Plan, Subset, SubsetError, SubsetTable,
+    offset::SerializeSubset, serialize::SerializeErrorFlags, variations::solver::Triple,
+    FastHashMap, NameIdClosure, Plan, Subset, SubsetError, SubsetTable,
 };
 use font_types::{NameId, Offset16, Offset32};
+use read_fonts::{tables::stat::Stat, MinByteRange};
 use skrifa::{
     raw::{
         tables::stat::{
@@ -15,7 +16,6 @@ use skrifa::{
     },
     Tag,
 };
-use write_fonts::read::{tables::stat::Stat, MinByteRange};
 
 impl NameIdClosure for Stat<'_> {
     //TODO: support instancing
@@ -63,7 +63,7 @@ impl Subset for Stat<'_> {
     fn subset(
         &self,
         plan: &Plan,
-        _font: &write_fonts::read::FontRef,
+        _font: &read_fonts::FontRef,
         s: &mut crate::serialize::Serializer,
         _builder: &mut write_fonts::FontBuilder,
     ) -> Result<(), crate::SubsetError> {
@@ -329,7 +329,7 @@ impl<'a> SubsetTable<'a> for AxisValueFormat4<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::{types::NameId, FontRef, TableProvider};
+    use read_fonts::{types::NameId, FontRef, TableProvider};
     #[test]
     fn test_nameid_closure() {
         let mut plan = Plan::default();

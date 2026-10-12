@@ -2,11 +2,11 @@
 //! Implement methods to modify and reorder the graph
 
 use crate::{
-    FastHashMap,
     priority_queue::PriorityQueue,
     serialize::{Link, LinkWidth, ObjIdx, Object, OffsetWhence, SerializeErrorFlags, Serializer},
+    FastHashMap,
 };
-use write_fonts::{read::collections::IntSet, types::Uint24};
+use read_fonts::{collections::IntSet, types::Uint24};
 
 mod coverage_graph;
 pub(crate) mod layout;
@@ -1948,8 +1948,8 @@ fn serialize_link(
 pub(crate) mod test {
     use super::*;
     use crate::serialize::OffsetWhence;
+    use read_fonts::types::{FixedSize, Offset16, Offset24, Offset32, Scalar};
     use std::ops::Index;
-    use write_fonts::types::{FixedSize, Offset16, Offset24, Offset32, Scalar};
 
     impl Vertex {
         // zeros all offsets

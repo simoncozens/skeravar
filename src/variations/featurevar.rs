@@ -2,15 +2,7 @@ use std::hash::Hash;
 
 use crate::FastHashMap;
 use font_types::{F2Dot14, MajorMinor, Offset32};
-use skrifa::{
-    raw::{
-        collections::IntSet,
-        tables::{gsub::FeatureList, layout::ConditionFormat1},
-        FontData, ReadError, TopLevelTable,
-    },
-    Tag,
-};
-use write_fonts::read::{
+use read_fonts::{
     tables::{
         gsub::Gsub,
         layout::{
@@ -19,6 +11,14 @@ use write_fonts::read::{
         },
     },
     MinByteRange,
+};
+use skrifa::{
+    raw::{
+        collections::IntSet,
+        tables::{gsub::FeatureList, layout::ConditionFormat1},
+        FontData, ReadError, TopLevelTable,
+    },
+    Tag,
 };
 
 use crate::{

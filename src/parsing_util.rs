@@ -1,8 +1,8 @@
 //! subsetter input parsing util functions
 use std::collections::BTreeMap;
 
-use write_fonts::{
-    read::collections::{int_set::Domain, IntSet},
+use read_fonts::{
+    collections::{int_set::Domain, IntSet},
     types::{GlyphId, NameId, Tag},
 };
 

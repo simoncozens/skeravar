@@ -1,23 +1,20 @@
 //! impl subset() for post
 
 use crate::{
-    FastHashMap,
     serialize::{SerializeErrorFlags, Serializer},
-    Plan, Subset, SubsetError, SubsetFlags,
+    FastHashMap, Plan, Subset, SubsetError, SubsetFlags,
 };
 use font_types::Fixed;
+use read_fonts::{
+    tables::post::{Post, DEFAULT_GLYPH_NAMES},
+    types::{BigEndian, Version16Dot16},
+    FontRef, MinByteRange, TopLevelTable,
+};
 use skrifa::{
     raw::tables::mvar::tags::{UNDO, UNDS},
     Tag,
 };
-use write_fonts::{
-    read::{
-        tables::post::{Post, DEFAULT_GLYPH_NAMES},
-        FontRef, MinByteRange, TopLevelTable,
-    },
-    types::{BigEndian, Version16Dot16},
-    FontBuilder,
-};
+use write_fonts::FontBuilder;
 
 // reference: subset() for post in harfbuzz
 // https://github.com/harfbuzz/harfbuzz/blob/a070f9ebbe88dc71b248af9731dd49ec93f4e6e6/src/hb-ot-post-table.hh#L96

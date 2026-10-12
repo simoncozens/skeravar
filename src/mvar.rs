@@ -1,18 +1,16 @@
 //! impl subset() for MVAR
 
 use crate::{
-    FastHashMap, offset::SerializeCopy, serialize::Serializer,
-    variations::subset_itemvarstore_with_instancing, IncBiMap, Plan, Subset, SubsetError,
+    offset::SerializeCopy, serialize::Serializer, variations::subset_itemvarstore_with_instancing,
+    FastHashMap, IncBiMap, Plan, Subset, SubsetError,
 };
 use font_types::Offset16;
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{mvar::Mvar, variations::DeltaSetIndex},
-        FontRef, TopLevelTable,
-    },
-    FontBuilder,
+use read_fonts::{
+    collections::IntSet,
+    tables::{mvar::Mvar, variations::DeltaSetIndex},
+    FontRef, TopLevelTable,
 };
+use write_fonts::FontBuilder;
 
 // reference: subset() for MVAR in harfbuzz
 // <https://github.com/harfbuzz/harfbuzz/blob/bcd5aa368d3fd3ef741ea29df15d3d56011811c0/src/hb-ot-var-mvar-table.hh#L330>

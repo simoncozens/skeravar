@@ -5,11 +5,8 @@ use crate::{
     Plan, Subset, SubsetError, CVT,
 };
 
-use write_fonts::{
-    read::{tables::cvar::Cvar, FontRef, TableProvider, TopLevelTable},
-    types::FWord,
-    FontBuilder,
-};
+use read_fonts::{tables::cvar::Cvar, types::FWord, FontRef, TableProvider, TopLevelTable};
+use write_fonts::FontBuilder;
 
 // reference: subset() for cvar table in harfbuzz
 // https://github.com/harfbuzz/harfbuzz/blob/main/src/hb-ot-var-cvar-table.hh

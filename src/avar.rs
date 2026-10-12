@@ -1,6 +1,6 @@
 use font_types::{F2Dot14, Fixed};
+use read_fonts::tables::{avar::Avar, variations::DeltaSetIndex};
 use skrifa::raw::{tables::avar::SegmentMaps, ReadError, TopLevelTable};
-use write_fonts::read::tables::{avar::Avar, variations::DeltaSetIndex};
 
 use crate::{
     serialize::SerializeErrorFlags,
@@ -12,7 +12,7 @@ impl Subset for Avar<'_> {
     fn subset(
         &self,
         plan: &crate::Plan,
-        _font: &write_fonts::read::FontRef,
+        _font: &read_fonts::FontRef,
         s: &mut crate::serialize::Serializer,
         _builder: &mut write_fonts::FontBuilder,
     ) -> Result<(), crate::SubsetError> {

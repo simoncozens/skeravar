@@ -7,10 +7,9 @@ use crate::{
     Plan, Subset, SubsetError, SubsetFlags,
 };
 
+use read_fonts::{tables::gvar::Gvar, types::GlyphId, types::Scalar, FontRef, TopLevelTable};
 use write_fonts::{
-    read::{tables::gvar::Gvar, types::GlyphId, FontRef, TopLevelTable},
     tables::gvar::{GlyphVariations, Gvar as WriteGvar},
-    types::Scalar,
     FontBuilder,
 };
 
@@ -291,7 +290,7 @@ impl GvarOffset for u32 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::{tables::gvar::GvarFlags, FontData, FontRead};
+    use read_fonts::{tables::gvar::GvarFlags, FontData, FontRead};
 
     /// Builds a synthetic gvar table with one entry per element of `glyph_data`.
     ///

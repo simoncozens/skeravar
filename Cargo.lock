@@ -924,6 +924,7 @@ dependencies = [
  "libtest-mimic",
  "log",
  "num-traits",
+ "read-fonts",
  "regex",
  "rstest",
  "similar",

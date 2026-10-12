@@ -5,17 +5,15 @@ use crate::{
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     CollectVariationIndices, FastHashMap, Plan, SubsetTable,
 };
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::{
-            gpos::{MarkArray, MarkRecord},
-            layout::CoverageTable,
-        },
-        types::GlyphId,
-        FontData,
+use read_fonts::{
+    collections::IntSet,
+    tables::{
+        gpos::{MarkArray, MarkRecord},
+        layout::CoverageTable,
     },
+    types::GlyphId,
     types::Offset16,
+    FontData,
 };
 
 #[inline]
@@ -156,7 +154,7 @@ impl<'a> SubsetTable<'a> for MarkRecord {
 #[cfg(test)]
 mod test {
     use super::*;
-    use write_fonts::read::FontRead;
+    use read_fonts::FontRead;
 
     // MarkArray with two MarkRecords (class 0 and class 1). Record 0 has a
     // null anchor; record 1 points at `rec1_anchor_offset` (0 = null) where an

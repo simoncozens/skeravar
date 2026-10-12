@@ -1,5 +1,10 @@
 //! impl subset() for OS/2
 use crate::{serialize::Serializer, Plan, Subset, SubsetError, SubsetFlags};
+use read_fonts::{
+    collections::IntSet,
+    tables::os2::{Os2, OS2_UNICODE_RANGES},
+    FontRef, TopLevelTable,
+};
 use skrifa::{
     raw::tables::mvar::tags::{
         CPHT, HASC, HCLA, HCLD, HDSC, HLGP, SBXO, SBXS, SBYO, SBYS, SPXO, SPXS, SPYO, SPYS, STRO,
@@ -8,14 +13,7 @@ use skrifa::{
     Tag,
 };
 use std::cmp::Ordering;
-use write_fonts::{
-    read::{
-        collections::IntSet,
-        tables::os2::{Os2, OS2_UNICODE_RANGES},
-        FontRef, TopLevelTable,
-    },
-    FontBuilder,
-};
+use write_fonts::FontBuilder;
 
 // reference: subset() for OS/2 in harfbuzz
 // https://github.com/harfbuzz/harfbuzz/blob/a070f9ebbe88dc71b248af9731dd49ec93f4e6e6/src/hb-ot-os2-table.hh#L229
