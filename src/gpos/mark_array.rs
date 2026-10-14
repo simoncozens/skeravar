@@ -1,8 +1,9 @@
 //! impl subset() for MarkRecord subtable
 use crate::FastHashMap;
 use crate::{
+    layout::for_each_intersected_coverage_index,
     offset::SerializeSubset,
-    serialize::{SerializeErrorFlags, Serializer},
+    serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     CollectVariationIndices, Plan, SubsetTable,
 };
 use read_fonts::{
@@ -36,6 +37,7 @@ macro_rules! mark_record_data {
 mark_record_data!(MarkRecord);
 mark_record_data!(MarkRecord2);
 
+#[inline]
 pub(crate) fn collect_mark_record_varidx(
     mark_record: &impl MarkRecordData,
     plan: &Plan,
@@ -52,44 +54,45 @@ pub(crate) fn get_mark_class_map(
     mark_records: &[impl MarkRecordData],
     glyph_set: &IntSet<GlyphId>,
 ) -> FastHashMap<u16, u16> {
-    let count = match coverage {
-        CoverageTable::Format1(t) => u32::from(t.glyph_count()),
-        CoverageTable::Format2(t) => u32::from(t.range_count()),
-        CoverageTable::Format3(t) => t.glyph_count().to_u32(),
-        CoverageTable::Format4(t) => t.range_count().to_u32(),
-    };
-    let num_bits = 32 - count.leading_zeros();
-    let coverage_population = coverage.population();
-
-    let retained_classes: IntSet<u16> =
-        if coverage_population as u32 > (glyph_set.len() as u32) * num_bits {
-            glyph_set
-                .iter()
-                .filter_map(|g| {
-                    coverage.get(g).and_then(|idx| {
-                        mark_records
-                            .get(idx as usize)
-                            .map(|mark_record| mark_record.mark_class())
-                    })
-                })
-                .collect()
-        } else {
-            coverage
-                .iter()
-                .enumerate()
-                .filter(|&(_, g)| glyph_set.contains(g))
-                .filter_map(|(idx, _)| {
-                    mark_records
-                        .get(idx)
-                        .map(|mark_record| mark_record.mark_class())
-                })
-                .collect()
-        };
+    let mut retained_classes = IntSet::<u16>::empty();
+    let _ = for_each_intersected_coverage_index::<()>(
+        coverage,
+        glyph_set,
+        mark_records.len() as u32,
+        |index| {
+            if let Some(record) = mark_records.get(index as usize) {
+                retained_classes.insert(record.mark_class());
+            }
+            Ok(())
+        },
+    );
     retained_classes
         .iter()
         .enumerate()
         .map(|(new_class, class)| (class, new_class as u16))
         .collect()
+}
+
+pub(crate) fn collect_retained_mark_varidx_and_classes(
+    coverage: &CoverageTable,
+    mark_records: &[impl MarkRecordData],
+    mark_array_data: FontData,
+    plan: &Plan,
+    varidx_set: &mut IntSet<u32>,
+) -> IntSet<u16> {
+    let mut retained_classes = IntSet::empty();
+    let _ = for_each_intersected_coverage_index::<()>(
+        coverage,
+        &plan.glyphset_gsub,
+        mark_records.len() as u32,
+        |index| {
+            let record = mark_records.get(index as usize).ok_or(())?;
+            collect_mark_record_varidx(record, plan, varidx_set, mark_array_data);
+            retained_classes.insert(record.mark_class());
+            Ok(())
+        },
+    );
+    retained_classes
 }
 
 macro_rules! subset_mark_array {
@@ -118,11 +121,19 @@ macro_rules! subset_mark_array {
 
                 let font_data = self.offset_data();
                 let mark_records = self.mark_records();
+                // Preserve records with null anchors while dropping an array
+                // if none of its retained records has an anchor.
+                let mut has_anchor = false;
                 for i in mark_record_idxes.iter() {
                     let Some(mark_record) = mark_records.get(i as usize) else {
                         return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
                     };
-                    mark_record.subset(plan, s, (mark_class_map, font_data))?;
+                    has_anchor |= !mark_record
+                        .subset(plan, s, (mark_class_map, font_data))
+                        .is_empty()?;
+                }
+                if !has_anchor {
+                    return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
                 }
                 Ok(())
             }
@@ -152,7 +163,7 @@ macro_rules! subset_mark_record {
 
                 let anchor_offset_pos = s.allocate_size($offset::RAW_BYTE_LEN, true)?;
                 if self.mark_anchor_offset().is_null() {
-                    return Ok(());
+                    return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
                 }
                 let mark_anchor = self
                     .mark_anchor(font_data)
@@ -165,3 +176,67 @@ macro_rules! subset_mark_record {
 }
 subset_mark_record!(MarkRecord, Offset16);
 subset_mark_record!(MarkRecord2, Offset24);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use read_fonts::FontRead;
+
+    // MarkArray with two MarkRecords (class 0 and class 1). Record 0 has a
+    // null anchor; record 1 points at `rec1_anchor_offset` (0 = null) where an
+    // AnchorFormat1 (x=100, y=200) is stored.
+    fn mark_array_bytes(rec1_anchor_offset: u8) -> [u8; 16] {
+        #[rustfmt::skip]
+        let raw: [u8; 16] = [
+            // markCount=2
+            0x00, 0x02,
+            // record 0: class 0, null anchor
+            0x00, 0x00, 0x00, 0x00,
+            // record 1: class 1, anchor offset
+            0x00, 0x01, 0x00, rec1_anchor_offset,
+            // @10 AnchorFormat1 x=100 y=200
+            0x00, 0x01, 0x00, 0x64, 0x00, 0xc8,
+        ];
+        raw
+    }
+
+    fn subset_mark_array(raw: &[u8]) -> (Result<(), SerializeErrorFlags>, Serializer) {
+        let mark_array = MarkArray::read(FontData::new(raw)).unwrap();
+        let plan = Plan::default();
+        let mark_record_idxes: IntSet<u32> = [0, 1].into_iter().collect();
+        let mark_class_map: FastHashMap<u16, u16> = [(0, 0), (1, 1)].into_iter().collect();
+
+        let mut s = Serializer::new(1024);
+        assert_eq!(s.start_serialize(), Ok(()));
+        let ret = mark_array.subset(&plan, &mut s, (&mark_record_idxes, &mark_class_map));
+        (ret, s)
+    }
+
+    /// As in harfbuzz, a MarkArray whose retained records all have null
+    /// anchors is EMPTY, so the Mark*Pos subtable that owns it is dropped.
+    #[test]
+    fn test_subset_mark_array_all_null_anchors_is_empty() {
+        let (ret, s) = subset_mark_array(&mark_array_bytes(0));
+        assert_eq!(ret, Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY));
+        assert!(!s.in_error());
+    }
+
+    /// One retained anchor is enough to keep the MarkArray. The record with a
+    /// null anchor is still written, with its offset left as 0.
+    #[test]
+    fn test_subset_mark_array_keeps_null_anchor_records() {
+        let (ret, mut s) = subset_mark_array(&mark_array_bytes(10));
+        assert_eq!(ret, Ok(()));
+        assert!(!s.in_error());
+        s.end_serialize();
+
+        #[rustfmt::skip]
+        let expected: [u8; 16] = [
+            0x00, 0x02,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x0a,
+            0x00, 0x01, 0x00, 0x64, 0x00, 0xc8,
+        ];
+        assert_eq!(s.copy_bytes(), expected);
+    }
+}

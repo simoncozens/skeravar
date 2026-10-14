@@ -134,6 +134,7 @@ pub use read_fonts::{
 type FastHashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
 
 const MAX_COMPOSITE_OPERATIONS_PER_GLYPH: u8 = 64;
+const MAX_NESTING_LEVEL: u8 = read_fonts::limits::MAX_RECURSION_DEPTH;
 // Support 24-bit gids. This should probably be extended to u32::MAX but
 // this causes tests to fail with 'subtract with overflow error'.
 // See <https://github.com/googlefonts/fontations/issues/997>

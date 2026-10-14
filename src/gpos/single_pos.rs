@@ -189,16 +189,30 @@ macro_rules! array_value_position {
                     .coverage()
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
-                let (retained_glyphs, retained_rec_idxes) = intersected_glyphs_and_indices(
+                let limit = if $format == 2u16 {
+                    u32::from(self.value_count())
+                } else {
+                    u32::MAX
+                };
+                let mut retained_glyphs = Vec::with_capacity(
+                    coverage
+                        .population()
+                        .min(plan.glyphset_gsub.len() as usize)
+                        .min(limit as usize),
+                );
+                let mut retained_rec_idxes = IntSet::empty();
+                for_each_intersected_glyph_and_index::<()>(
                     &coverage,
                     &plan.glyphset_gsub,
                     &plan.glyph_map_gsub,
-                    if $format == 2u16 {
-                        u32::from(self.value_count())
-                    } else {
-                        u32::MAX
+                    limit,
+                    |index, gid| {
+                        retained_glyphs.push(gid);
+                        retained_rec_idxes.insert(index);
+                        Ok(())
                     },
-                );
+                )
+                .unwrap();
 
                 if retained_glyphs.is_empty() {
                     return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);

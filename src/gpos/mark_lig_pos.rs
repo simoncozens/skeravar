@@ -5,8 +5,8 @@ mod extended_tests;
 
 use crate::FastHashMap;
 use crate::{
-    gpos::mark_array::{collect_mark_record_varidx, get_mark_class_map},
-    layout::{intersected_coverage_indices, intersected_glyphs_and_indices},
+    gpos::mark_array::{collect_retained_mark_varidx_and_classes, get_mark_class_map},
+    layout::{for_each_intersected_coverage_index, intersected_glyphs_and_indices},
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::SubsetOffsetArray,
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
@@ -40,16 +40,13 @@ macro_rules! collect_mark_lig_variations {
                 let mark_array_data = mark_array.offset_data();
                 let mark_records = mark_array.mark_records();
 
-                let mark_record_idxes = intersected_coverage_indices(&mark_coverage, glyph_set);
-                let mut retained_mark_classes = IntSet::empty();
-                for i in mark_record_idxes.iter() {
-                    let Some(mark_record) = mark_records.get(i as usize) else {
-                        return;
-                    };
-                    let class = mark_record.mark_class();
-                    collect_mark_record_varidx(mark_record, plan, varidx_set, mark_array_data);
-                    retained_mark_classes.insert(class);
-                }
+                let retained_mark_classes = collect_retained_mark_varidx_and_classes(
+                    &mark_coverage,
+                    mark_records,
+                    mark_array_data,
+                    plan,
+                    varidx_set,
+                );
 
                 let Ok(lig_coverage) = self.ligature_coverage() else {
                     return;
@@ -58,28 +55,27 @@ macro_rules! collect_mark_lig_variations {
                     return;
                 };
                 let lig_attaches = lig_array.ligature_attaches();
-                let lig_attach_idxes = intersected_coverage_indices(&lig_coverage, glyph_set);
-                for i in lig_attach_idxes.iter() {
-                    let lig_attach = match lig_attaches.get(i as usize) {
-                        Err(ReadError::NullOffset) => continue,
-                        Err(_) => return,
-                        Ok(lig_attach) => lig_attach,
-                    };
-
-                    let lig_attach_data = lig_attach.offset_data();
-                    for component in lig_attach.component_records().iter() {
-                        let Ok(component) = component else {
-                            return;
+                let _ = for_each_intersected_coverage_index(
+                    &lig_coverage,
+                    glyph_set,
+                    lig_array.ligature_count(),
+                    |index| {
+                        let attach = match lig_attaches.get(index as usize) {
+                            Err(ReadError::NullOffset) => return Ok(()),
+                            other => other?,
                         };
-
-                        let lig_anchors = component.ligature_anchors(lig_attach_data);
-                        for j in retained_mark_classes.iter() {
-                            if let Some(Ok(anchor)) = lig_anchors.get(j as usize) {
-                                anchor.collect_variation_indices(plan, varidx_set);
+                        for component in attach.component_records().iter() {
+                            let component = component?;
+                            let anchors = component.ligature_anchors(attach.offset_data());
+                            for class in retained_mark_classes.iter() {
+                                if let Some(Ok(anchor)) = anchors.get(class as usize) {
+                                    anchor.collect_variation_indices(plan, varidx_set);
+                                }
                             }
                         }
-                    }
-                }
+                        Ok(())
+                    },
+                );
             }
         }
     };

@@ -5,7 +5,7 @@ mod extended_tests;
 
 use crate::FastHashMap;
 use crate::{
-    layout::{intersected_coverage_indices, intersected_glyphs_and_indices},
+    layout::{for_each_intersected_coverage_index, for_each_intersected_glyph_and_index},
     offset::{SerializeSerialize, SerializeSubset},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     CollectVariationIndices, Plan, SubsetState, SubsetTable,
@@ -53,25 +53,29 @@ macro_rules! subset_cursive_position {
                 let exit_records = self.entry_exit_record();
                 let font_data = self.offset_data();
 
-                let (glyphs, exit_record_idxes) = intersected_glyphs_and_indices(
-                    &coverage,
-                    &plan.glyphset_gsub,
-                    &plan.glyph_map_gsub,
-                    exit_records.len() as u32,
+                let count = u32::from(self.entry_exit_count());
+                let glyph_set = &plan.glyphset_gsub;
+                let mut retained_glyphs = Vec::with_capacity(
+                    coverage
+                        .population()
+                        .min(glyph_set.len() as usize)
+                        .min(count as usize),
                 );
-                if glyphs.is_empty() {
-                    return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
-                }
-
-                let mut retained_glyphs = Vec::with_capacity(glyphs.len());
-                for (&gid, i) in glyphs.iter().zip(exit_record_idxes.iter()) {
-                    let Some(exit_record) = exit_records.get(i as usize) else {
-                        return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
-                    };
-                    if !exit_record.subset(plan, s, font_data).is_empty()? {
-                        retained_glyphs.push(gid);
-                    }
-                }
+                for_each_intersected_glyph_and_index(
+                    &coverage,
+                    glyph_set,
+                    &plan.glyph_map_gsub,
+                    count,
+                    |index, gid| {
+                        let record = exit_records.get(index as usize).ok_or_else(|| {
+                            s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)
+                        })?;
+                        if !record.subset(plan, s, font_data).is_empty()? {
+                            retained_glyphs.push(gid);
+                        }
+                        Ok(())
+                    },
+                )?;
 
                 if retained_glyphs.is_empty() {
                     return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
@@ -137,18 +141,21 @@ macro_rules! collect_cursive_variations {
                 let font_data = self.offset_data();
                 let glyph_set = &plan.glyphset_gsub;
                 let entry_exit_records = self.entry_exit_record();
-                let record_idxes = intersected_coverage_indices(&coverage, glyph_set);
-                for i in record_idxes.iter() {
-                    let Some(rec) = entry_exit_records.get(i as usize) else {
-                        return;
-                    };
-                    if let Some(Ok(entry_anchor)) = rec.entry_anchor(font_data) {
-                        entry_anchor.collect_variation_indices(plan, varidx_set);
-                    }
-                    if let Some(Ok(exit_anchor)) = rec.exit_anchor(font_data) {
-                        exit_anchor.collect_variation_indices(plan, varidx_set);
-                    }
-                }
+                let _ = for_each_intersected_coverage_index::<()>(
+                    &coverage,
+                    glyph_set,
+                    self.entry_exit_count(),
+                    |index| {
+                        let rec = entry_exit_records.get(index as usize).ok_or(())?;
+                        if let Some(Ok(anchor)) = rec.entry_anchor(font_data) {
+                            anchor.collect_variation_indices(plan, varidx_set);
+                        }
+                        if let Some(Ok(anchor)) = rec.exit_anchor(font_data) {
+                            anchor.collect_variation_indices(plan, varidx_set);
+                        }
+                        Ok(())
+                    },
+                );
             }
         }
     };
