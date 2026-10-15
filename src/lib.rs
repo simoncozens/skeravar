@@ -23,6 +23,7 @@ mod hvar;
 mod inc_bimap;
 mod layout;
 mod maxp;
+mod metrics;
 mod mvar;
 mod name;
 mod offset;
