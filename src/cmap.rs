@@ -10,6 +10,7 @@ use crate::{
 use crate::FastHashMap;
 use read_fonts::{
     collections::IntSet,
+    tables::cmap::Dmap,
     tables::cmap::{
         Cmap, Cmap12, Cmap14, Cmap4, CmapSubtable, DefaultUvs, EncodingRecord, NonDefaultUvs,
         PlatformId, SequentialMapGroup, UvsMapping, VariationSelector,
@@ -77,6 +78,89 @@ impl Subset for Cmap<'_> {
         serialize_cmap(self, s, plan, &retained_encoding_records)
             .map_err(|_| SubsetTableError(Cmap::TAG))
     }
+}
+
+impl Subset for Dmap<'_> {
+    fn subset(
+        &self,
+        plan: &Plan,
+        _font: &FontRef,
+        s: &mut Serializer,
+        _builder: &mut FontBuilder,
+    ) -> Result<(), SubsetError> {
+        serialize_dmap(&self.as_cmap(), s, plan).map_err(|error| {
+            if error != SerializeErrorFlags::SERIALIZE_ERROR_EMPTY {
+                s.set_err(error);
+            }
+            SubsetTableError(Dmap::TAG)
+        })
+    }
+}
+
+fn serialize_dmap(dmap: &Cmap, s: &mut Serializer, plan: &Plan) -> Result<(), SerializeErrorFlags> {
+    if dmap.encoding_records().len() != dmap.num_tables() as usize {
+        return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+    }
+    s.embed(0u16)?;
+    let count_pos = s.embed(0u16)?;
+    let mut count = 0;
+    let variation_index = dmap.uvs_subtable().map(|(index, _)| index as usize);
+    for (index, record) in dmap.encoding_records().iter().enumerate() {
+        let retain = retain_encoding_record_for_subset(record, dmap)
+            || (record.platform_id() == PlatformId::Unicode
+                && matches!(record.encoding_id(), 5 | 6));
+        if !retain {
+            continue;
+        }
+        let subtable = record
+            .subtable(dmap.offset_data())
+            .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
+        if !matches!(subtable.format(), 4 | 12 | 13 | 14 | 15) {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_OTHER));
+        }
+        if matches!(subtable.format(), 14 | 15) && Some(index) != variation_index {
+            continue;
+        }
+        let truncated = match &subtable {
+            CmapSubtable::Format12(table) => table.groups().len() != table.num_groups() as usize,
+            CmapSubtable::Format13(table) => table.groups().len() != table.num_groups() as usize,
+            _ => false,
+        };
+        if truncated {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR));
+        }
+        // Project the effective mapping onto each subtable's nonzero coverage,
+        // as for cmap. If pruning changes which nominal subtable is selected,
+        // a lower-priority subtable must not introduce different glyphs.
+        // Zero nominal mappings can be omitted because they fall back to cmap.
+        let mappings: Vec<_> = plan
+            .unicode_to_new_gid_list
+            .iter()
+            .filter_map(|(cp, gid)| {
+                let old_gid = subtable.map_codepoint(*cp)?;
+                (old_gid != GlyphId::NOTDEF).then_some((*cp, *gid))
+            })
+            .collect();
+        if subtable.format() == 4
+            && mappings
+                .iter()
+                .any(|(_, gid)| gid.to_u32() > u16::MAX as u32)
+        {
+            return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW));
+        }
+        if serialize_encoding_record(record, &subtable, s, &mappings, plan, None, true)?.is_some() {
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY);
+    }
+    s.check_assign::<u16>(
+        count_pos,
+        count,
+        SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW,
+    )?;
+    Ok(())
 }
 
 fn retain_encoding_record_for_subset(record: &EncodingRecord, cmap: &Cmap) -> bool {
@@ -193,6 +277,7 @@ fn serialize_cmap(
                 &cp_to_new_gid_list,
                 plan,
                 format4_objidx,
+                false,
             ) {
                 Ok(obj_idx) => obj_idx,
                 Err(e) => {
@@ -239,6 +324,7 @@ fn serialize_cmap(
                 &cp_to_new_gid_list,
                 plan,
                 format12_objidx,
+                false,
             )?;
         } else if format == 14 {
             format14_objidx = serialize_encoding_record(
@@ -248,6 +334,7 @@ fn serialize_cmap(
                 &plan.unicode_to_new_gid_list,
                 plan,
                 format14_objidx,
+                false,
             )?;
         }
     }
@@ -274,6 +361,7 @@ fn serialize_encoding_record(
     cp_to_new_gid_list: &[(u32, GlyphId)],
     plan: &Plan,
     obj_idx: Option<ObjIdx>,
+    dmap: bool,
 ) -> Result<Option<ObjIdx>, SerializeErrorFlags> {
     let snap = s.snapshot();
     s.embed(record.platform_id())?;
@@ -285,9 +373,17 @@ fn serialize_encoding_record(
     } else {
         s.push()?;
         let init_len = s.length();
+        let init_head = s.head();
         match cmap_subtable.serialize(s, plan, cp_to_new_gid_list) {
             Ok(()) => {
                 if s.length() > init_len {
+                    if dmap {
+                        match cmap_subtable.format() {
+                            4 => s.copy_assign(init_head + 4, 0u16),
+                            12 | 13 => s.copy_assign(init_head + 8, 0u32),
+                            _ => (),
+                        }
+                    }
                     s.pop_pack(true).ok_or_else(|| s.error())?
                 } else {
                     s.pop_discard();
