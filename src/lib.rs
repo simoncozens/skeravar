@@ -1001,6 +1001,8 @@ impl Plan {
                 if let Some(var_index_map) = &var_index_map {
                     delta_set_indices.extend(variation_indices.iter());
                     variation_indices.clear();
+                    // at most one entry per delta set index
+                    deltaset_idx_var_idx_map.reserve(delta_set_indices.len() as usize);
                     for idx in delta_set_indices.iter() {
                         if let Ok(var_idx) = var_index_map.get(idx) {
                             let var_idx = ((var_idx.outer as u32) << 16) + var_idx.inner as u32;
@@ -1570,9 +1572,14 @@ fn remap_delta_set_indices(
     DeltaSetIdxVarIdxMap,
     FastHashMap<u32, (u32, F48Dot16)>,
 ) {
-    let mut new_deltaset_idx_varidx_map = FastHashMap::default();
-    let mut old_to_new_deltaset_idx_map = FastHashMap::default();
-    let mut deltaset_idx_delta_map = FastHashMap::default();
+    // at most one entry per delta set index in each map
+    let capacity = delta_set_indices.len() as usize;
+    let mut new_deltaset_idx_varidx_map =
+        FastHashMap::with_capacity_and_hasher(capacity, foldhash::fast::FixedState::default());
+    let mut old_to_new_deltaset_idx_map =
+        FastHashMap::with_capacity_and_hasher(capacity, foldhash::fast::FixedState::default());
+    let mut deltaset_idx_delta_map =
+        FastHashMap::with_capacity_and_hasher(capacity, foldhash::fast::FixedState::default());
 
     for (new_deltaset_idx, deltaset_idx) in delta_set_indices.iter().enumerate() {
         let Some(var_idx) = deltaset_idx_var_idx_map.get(&deltaset_idx) else {
@@ -1651,14 +1658,22 @@ fn get_font_num_glyphs(font: &FontRef) -> usize {
 pub(crate) fn remap_indices<T: Domain + std::cmp::Eq + std::hash::Hash + TryFrom<usize>>(
     indices: IntSet<T>,
 ) -> FastHashMap<T, T> {
-    indices
-        .iter()
-        .enumerate()
-        // Note: new indices that don't fit in `T` are dropped rather than
-        // silently truncated; downstream lookups will then miss and surface a
-        // serialization error instead of emitting a wrong index.
-        .filter_map(|(new_idx, old_idx)| Some((old_idx, T::try_from(new_idx).ok()?)))
-        .collect()
+    // filter_map gives no size hint, so reserve up front to avoid rehashing as the
+    // map grows (e.g. tens of thousands of COLRv1 layers)
+    let mut map = FastHashMap::with_capacity_and_hasher(
+        indices.len() as usize,
+        foldhash::fast::FixedState::default(),
+    );
+    map.extend(
+        indices
+            .iter()
+            .enumerate()
+            // Note: new indices that don't fit in `T` are dropped rather than
+            // silently truncated; downstream lookups will then miss and surface a
+            // serialization error instead of emitting a wrong index.
+            .filter_map(|(new_idx, old_idx)| Some((old_idx, T::try_from(new_idx).ok()?))),
+    );
+    map
 }
 
 fn remap_palette_indices(indices: IntSet<u16>) -> FastHashMap<u16, u16> {
