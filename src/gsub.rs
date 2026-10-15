@@ -246,8 +246,6 @@ fn subset_gsub(
     }
     let version_pos = s.embed(gsub.version())?;
     let mut c = SubsetLayoutContext::new(Gsub::TAG);
-    c.feature_record_cond_idx_map = plan.gsub_feature_record_cond_idx_map.clone();
-    c.catch_all_record_feature_idxes = plan.gsub_old_features.clone();
     let script_list_offset_pos = s.embed(0_u16)?;
     let feature_list_offset_pos = s.embed(0_u16)?;
     let lookup_list_offset_pos = s.embed(0_u16)?;
