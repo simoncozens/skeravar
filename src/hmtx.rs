@@ -11,7 +11,6 @@ use read_fonts::{
 crate::metrics::subset_metrics_table!(
     Hmtx,
     Hhea,
-    h_glyph_metric_records,
     hhea,
     false,
     crate::metrics::MetricsDirection::Horizontal
@@ -19,7 +18,6 @@ crate::metrics::subset_metrics_table!(
 crate::metrics::subset_metrics_table!(
     HmtxExtended,
     HheaExtended,
-    h_glyph_metric_records,
     hhea_extended,
     true,
     crate::metrics::MetricsDirection::Horizontal

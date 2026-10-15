@@ -240,7 +240,7 @@ fn recompute_header_bounds(header: &mut [u8], plan: &Plan, direction: MetricsDir
 }
 
 macro_rules! subset_metrics_table {
-    ($table:ident, $header:ident, $records:ident, $read_header:ident, $wide:expr, $direction:expr) => {
+    ($table:ident, $header:ident, $read_header:ident, $wide:expr, $direction:expr) => {
         impl crate::Subset for $table<'_> {
             fn subset(
                 &self,
@@ -249,13 +249,9 @@ macro_rules! subset_metrics_table {
                 s: &mut crate::serialize::Serializer,
                 builder: &mut write_fonts::FontBuilder,
             ) -> Result<(), crate::SubsetError> {
-                let records = font.$records().map_err(|_| {
-                    crate::metrics::error(
-                        s,
-                        $table::TAG,
-                        crate::serialize::SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR,
-                    )
-                })?;
+                // The records of this table, not the one the font would
+                // select, which may have been dropped.
+                let records = read_fonts::tables::hmtx::GlyphMetricRecords::from(self.clone());
                 let header = font.$read_header().map_err(|_| {
                     crate::metrics::error(
                         s,

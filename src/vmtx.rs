@@ -11,7 +11,6 @@ use read_fonts::{
 crate::metrics::subset_metrics_table!(
     Vmtx,
     Vhea,
-    v_glyph_metric_records,
     vhea,
     false,
     crate::metrics::MetricsDirection::Vertical
@@ -19,7 +18,6 @@ crate::metrics::subset_metrics_table!(
 crate::metrics::subset_metrics_table!(
     VmtxExtended,
     VheaExtended,
-    v_glyph_metric_records,
     vhea_extended,
     true,
     crate::metrics::MetricsDirection::Vertical
