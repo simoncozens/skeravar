@@ -870,8 +870,12 @@ impl Plan {
         }
 
         /* Populate a full set of glyphs to retain by adding all referenced composite glyphs. */
+<<<<<<< HEAD
         if let Ok(loca) = font.loca(None) {
             let glyf = font.glyf().expect("Error reading glyf table");
+=======
+        if let Ok((glyf, loca)) = font.selected_glyf_loca(None) {
+>>>>>>> 840eed6 (Name the selected tables and the original forms consistently)
             let operation_count =
                 self.glyphset_gsub.len() * (MAX_COMPOSITE_OPERATIONS_PER_GLYPH as u64);
             for gid in self.glyphset_colred.iter() {
@@ -1674,8 +1678,18 @@ fn remove_invalid_gids(gids: &mut IntSet<GlyphId>, num_glyphs: usize) {
 }
 
 fn get_font_num_glyphs(font: &FontRef) -> usize {
+<<<<<<< HEAD
     let ret = font.loca(None).map(|loca| loca.len()).unwrap_or_default();
     let maxp = font.maxp().expect("Error reading maxp table");
+=======
+    let ret = font
+        .selected_glyf_loca(None)
+        .map(|(_, loca)| loca.len())
+        .unwrap_or_default();
+    let maxp = font
+        .selected_maxp()
+        .expect("Error reading maximum profile table");
+>>>>>>> 840eed6 (Name the selected tables and the original forms consistently)
     ret.max(maxp.num_glyphs() as usize)
 }
 
@@ -2109,8 +2123,17 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Hdmx::TAG))?
             .subset(plan, font, s, builder),
 
+<<<<<<< HEAD
         //Skip, handled by glyf
         Head::TAG => Ok(()),
+=======
+        //handled by glyf table if exists
+        Head::TAG => font.selected_glyf_loca(None).map(|_| ()).or_else(|_| {
+            font.head()
+                .map_err(|_| SubsetError::SubsetTableError(Head::TAG))?
+                .subset(plan, font, s, builder)
+        }),
+>>>>>>> 840eed6 (Name the selected tables and the original forms consistently)
 
         //Skip, handled by Hmtx
         Hhea::TAG => Ok(()),
