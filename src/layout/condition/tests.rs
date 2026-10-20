@@ -79,13 +79,13 @@ fn conditions_preserve_all_formats_and_remap_variable_values() {
             let before = table
                 .evaluate(&coords, |index| {
                     assert_eq!(index, 0x10002);
-                    Ok::<f64, read_fonts::model::Error>(delta)
+                    Ok::<_, read_fonts::model::Error>(delta)
                 })
                 .unwrap();
             let after = output
                 .evaluate(&coords, |index| {
                     assert_eq!(index, 0x70008);
-                    Ok::<f64, read_fonts::model::Error>(delta - 3.0)
+                    Ok::<_, read_fonts::model::Error>(delta - 3.0)
                 })
                 .unwrap();
             assert_eq!(before, after);
@@ -139,7 +139,7 @@ fn conditions_keep_null_boolean_operands_and_condition_set_members() {
         let output = Condition::read(FontData::new(&output)).unwrap();
         assert_eq!(
             output
-                .evaluate(&[], |_| Ok::<f64, read_fonts::model::Error>(0.0))
+                .evaluate(&[], |_| Ok::<_, read_fonts::model::Error>(0.0))
                 .unwrap(),
             expected
         );
@@ -171,7 +171,7 @@ fn conditions_keep_null_boolean_operands_and_condition_set_members() {
         Condition::Format5Negate(_)
     ));
     assert!(!output
-        .evaluate(&[], |_| Ok::<f64, read_fonts::model::Error>(0.0))
+        .evaluate(&[], |_| Ok::<_, read_fonts::model::Error>(0.0))
         .unwrap());
 }
 
