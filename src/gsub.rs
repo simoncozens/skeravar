@@ -7,7 +7,7 @@ mod reverse_chain_single_subst;
 mod single_subst;
 
 use crate::{
-    collect_features_with_retained_subs, find_duplicate_features,
+    collect_features_with_retained_subs, collect_variable_feature_indices, find_duplicate_features,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, Serializer},
@@ -79,12 +79,16 @@ impl LayoutClosure for Gsub<'_> {
         let Ok(feature_list) = self.feature_list() else {
             return FastHashMap::default();
         };
-        let mut duplicates =
-            find_duplicate_features(&feature_list, lookup_indices, feature_indices);
-        if let Some(Ok(variations)) = self.feature_variations() {
-            crate::layout::protect_lookup_variation_features(&variations, &mut duplicates);
-        }
-        duplicates
+        let variable_features = match self.feature_variations() {
+            Some(Ok(variations)) => collect_variable_feature_indices(&variations),
+            _ => IntSet::empty(),
+        };
+        find_duplicate_features(
+            &feature_list,
+            lookup_indices,
+            feature_indices,
+            &variable_features,
+        )
     }
 
     fn prune_langsys(
