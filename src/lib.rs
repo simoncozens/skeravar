@@ -889,13 +889,13 @@ impl Plan {
     fn layout_populate_gids_to_retain(&mut self, font: &FontRef) -> Result<(), SubsetError> {
         if !self.drop_tables.contains(Tag::new(b"GSUB")) {
             if let Ok(gsub) = font.gsub() {
-                gsub.closure_glyphs_lookups_features(self)?;
+                gsub.closure_glyphs_lookups_features(self);
             }
         }
 
         if !self.drop_tables.contains(Tag::new(b"GPOS")) {
             if let Ok(gpos) = font.gpos() {
-                gpos.closure_glyphs_lookups_features(self)?;
+                gpos.closure_glyphs_lookups_features(self);
             }
         }
         Ok(())
@@ -1783,7 +1783,7 @@ pub(crate) trait LayoutClosure {
         layout_scripts: &IntSet<Tag>,
     ) -> (FastHashMap<u16, IntSet<u16>>, IntSet<u16>);
 
-    fn closure_glyphs_lookups_features(&self, plan: &mut Plan) -> Result<(), SubsetError>;
+    fn closure_glyphs_lookups_features(&self, plan: &mut Plan);
 }
 
 pub const CVT: Tag = Tag::new(b"cvt ");

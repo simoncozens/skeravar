@@ -10,18 +10,14 @@ mod pair_pos;
 mod single_pos;
 mod value_record;
 
+use crate::FastHashMap;
 use crate::{
     collect_features_with_retained_subs, collect_variable_feature_indices, find_duplicate_features,
     offset::SerializeSubset,
     prune_features, remap_feature_indices, remap_indices,
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    variations::featurevar::{
-        collect_feature_substitutes_with_variations, collect_lookups_with_substitutes,
-        feature_variation_collect_lookups, CollectFeatureSubstitutesContext,
-        FeatureSubstituteCollectionResult,
-    },
-    CollectVariationIndices, FastHashMap, LayoutClosure, NameIdClosure, Plan, PruneLangSysContext,
-    Subset, SubsetError, SubsetLayoutContext, SubsetState, SubsetTable,
+    CollectVariationIndices, LayoutClosure, NameIdClosure, Plan, PruneLangSysContext, Subset,
+    SubsetError, SubsetLayoutContext, SubsetState, SubsetTable,
 };
 use read_fonts::{
     collections::IntSet,
@@ -108,81 +104,21 @@ impl LayoutClosure for Gpos<'_> {
         c.prune_langsys(&script_list, layout_scripts)
     }
 
-    fn closure_glyphs_lookups_features(&self, plan: &mut Plan) -> Result<(), SubsetError> {
+    fn closure_glyphs_lookups_features(&self, plan: &mut Plan) {
         let Ok(feature_indices) =
             self.collect_features(&plan.layout_scripts, &IntSet::all(), &plan.layout_features)
         else {
-            return Ok(());
+            return;
         };
 
-        // Collect feature substitutes with variations
-        let feature_substitutes = if !plan.user_axes_location.is_empty() {
-            let mut ctx = CollectFeatureSubstitutesContext {
-                axes_index_tag_map: &plan.axes_old_index_tag_map,
-                axes_location: &plan.axes_location,
-                record_cond_idx_map: FastHashMap::default(),
-                catch_all_record_feature_indices: IntSet::default(),
-                feature_indices: feature_indices.clone(),
-                apply: false,
-                variation_applied: false,
-                universal: false,
-                cur_record_idx: 0,
-                conditionset_map: FastHashMap::default(),
-                feature_substitutes_lookup_map: FastHashMap::default(),
-            };
-
-            if let Some(Ok(feature_variations)) = self.feature_variations() {
-                collect_feature_substitutes_with_variations(&feature_variations, &mut ctx)?;
-                ctx.into()
-            } else {
-                FeatureSubstituteCollectionResult::empty()
-            }
-        } else {
-            FeatureSubstituteCollectionResult::empty()
+        let Ok(mut lookup_indices) = self.collect_lookups(&feature_indices) else {
+            return;
         };
-
-        // Store results in plan AFTER extracting what we need
-        let record_cond_idx_map = feature_substitutes.record_cond_idx_map.clone();
-        plan.gpos_feature_record_cond_idx_map = record_cond_idx_map.clone();
-        plan.gpos_feature_substitutes_map =
-            feature_substitutes.feature_substitutes_lookup_map.clone();
-        plan.gpos_old_features = feature_substitutes.catch_all_record_feature_indices.clone();
-
-        // Collect lookups, using substitutes where available
-        let mut lookup_indices = collect_lookups_with_substitutes(
-            self.feature_list().map_err(SubsetError::ReadError)?,
-            &feature_indices,
-            &feature_substitutes,
-        )?;
-
-        // Collect lookups from catch-all features and store their offsets
-        for feature_index in feature_substitutes.catch_all_record_feature_indices.iter() {
-            let featurelist = self.feature_list().map_err(SubsetError::ReadError)?;
-            if let Some(record) = featurelist.feature_records().get(feature_index as usize) {
-                if let Ok(feature) = record.feature(featurelist.offset_data()) {
-                    for lookup_idx in feature.lookup_list_indices() {
-                        lookup_indices.insert(lookup_idx.get());
-                    }
-                    let tag = record.feature_tag();
-                    plan.gpos_old_feature_idx_tag_map
-                        .insert(feature_index as usize, (tag, record.feature_offset()));
-                }
-            }
-        }
-
-        // If all axes are pinned then all feature variations will be dropped so there's no need
-        // to collect lookups from them.
-        if !plan.all_axes_pinned {
-            feature_variation_collect_lookups_gpos(
-                self,
-                &feature_indices,
-                &record_cond_idx_map,
-                &mut lookup_indices,
-            )?;
-        }
-
-        let Ok(_) = self.closure_lookups(&plan.glyphset_gsub, &mut lookup_indices) else {
-            return Ok(());
+        if self
+            .closure_lookups(&plan.glyphset_gsub, &mut lookup_indices)
+            .is_err()
+        {
+            return;
         };
 
         let feature_indices = self.prune_features(&lookup_indices, feature_indices);
@@ -197,28 +133,9 @@ impl LayoutClosure for Gpos<'_> {
         (plan.gpos_features, plan.gpos_features_w_duplicates) =
             remap_feature_indices(&feature_indices, &duplicate_feature_index_map);
         plan.gpos_script_langsys = script_langsys_map;
-        Ok(())
     }
 }
 
-fn feature_variation_collect_lookups_gpos(
-    gpos: &Gpos,
-    feature_indices: &IntSet<u16>,
-    feature_record_cond_idx_map: &FastHashMap<u16, IntSet<u16>>,
-    lookup_indices: &mut IntSet<u16>,
-) -> Result<(), SubsetError> {
-    let Some(feature_variations) = gpos.feature_variations() else {
-        return Ok(());
-    };
-    let feature_variations = feature_variations.map_err(SubsetError::ReadError)?;
-
-    feature_variation_collect_lookups(
-        &feature_variations,
-        feature_indices,
-        feature_record_cond_idx_map,
-        lookup_indices,
-    )
-}
 impl Subset for Gpos<'_> {
     fn subset_with_state(
         &self,
