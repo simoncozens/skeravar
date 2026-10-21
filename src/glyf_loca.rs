@@ -22,8 +22,8 @@ use read_fonts::{
         head::Head,
         loca::Loca,
     },
-    types::GlyphId,
-    FontRef, TableProvider, TopLevelTable,
+    types::{GlyphId, Scalar, Tag, Uint24},
+    FontRead, FontRef, TableProvider, TopLevelTable,
 };
 use skrifa::{
     prelude::{LocationRef, Size},
@@ -369,51 +369,156 @@ fn subset_composite_glyph(g: &CompositeGlyph, plan: &Plan) -> Vec<u8> {
     out
 }
 
+fn serialize_composite_glyph(
+    s: &mut Serializer,
+    bytes: &[u8],
+    plan: &Plan,
+) -> Result<(), SubsetError> {
+    let map_err = |_| SubsetTableError(Glyf::TAG);
+    let start = s.embed_bytes(bytes).map_err(map_err)?;
+    let out = s
+        .get_mut_data(start..start + bytes.len())
+        .ok_or(SubsetTableError(Glyf::TAG))?;
+
+    let drop_hinting = plan
+        .subset_flags
+        .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING);
+    let set_overlaps_flag = plan
+        .subset_flags
+        .contains(SubsetFlags::SUBSET_FLAGS_SET_OVERLAPS_FLAG);
+
+    let mut more = true;
+    let mut i: usize = 10;
+    let len = out.len();
+
+    while more {
+        if i + 4 > len {
+            return Err(SubsetTableError(Glyf::TAG));
+        }
+        let orig_flags = u16::from_be_bytes([out[i], out[i + 1]]);
+        let mut flags = orig_flags;
+
+        if drop_hinting {
+            flags &= !CompositeGlyphFlags::WE_HAVE_INSTRUCTIONS.bits();
+        }
+
+        // only set overlaps flag on the first component
+        if set_overlaps_flag && i == 10 {
+            flags |= CompositeGlyphFlags::OVERLAP_COMPOUND.bits();
+        }
+
+        if flags != orig_flags {
+            out[i..i + 2].copy_from_slice(&flags.to_be_bytes());
+        }
+
+        let comp_flags = CompositeGlyphFlags::from_bits_truncate(orig_flags);
+        let (old_gid, gid_len) =
+            component_gid(&out[i + 2..], comp_flags).ok_or(SubsetTableError(Glyf::TAG))?;
+        let new_gid = plan
+            .glyph_map
+            .get(&old_gid)
+            .ok_or(SubsetTableError(Glyf::TAG))?
+            .to_u32();
+        if gid_len == 3 {
+            let new_gid =
+                Uint24::try_from(new_gid as usize).map_err(|_| SubsetTableError(Glyf::TAG))?;
+            out[i + 2..i + 5].copy_from_slice(&new_gid.to_be_bytes());
+        } else {
+            let new_gid = u16::try_from(new_gid).map_err(|_| SubsetTableError(Glyf::TAG))?;
+            out[i + 2..i + 4].copy_from_slice(&new_gid.to_be_bytes());
+        }
+
+        i += 2 + gid_len;
+
+        if comp_flags.contains(CompositeGlyphFlags::ARG_1_AND_2_ARE_WORDS) {
+            i += 4;
+        } else {
+            i += 2;
+        }
+
+        if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_A_SCALE) {
+            i += 2;
+        } else if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_AN_X_AND_Y_SCALE) {
+            i += 4;
+        } else if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_A_TWO_BY_TWO) {
+            i += 8;
+        }
+
+        more = comp_flags.contains(CompositeGlyphFlags::MORE_COMPONENTS);
+    }
+
+    Ok(())
+}
+
+fn component_gid(bytes: &[u8], flags: CompositeGlyphFlags) -> Option<(GlyphId, usize)> {
+    if flags.contains(CompositeGlyphFlags::GID_IS_24_BIT) {
+        Some((GlyphId::new(Uint24::read(bytes.get(..3)?)?.to_u32()), 3))
+    } else {
+        Some((GlyphId::new(u32::from(u16::read(bytes.get(..2)?)?)), 2))
+    }
+}
+
 // trim padding bytes for simple glyphs, return trimmed length of the raw data for flags & x/y coordinates
 fn trim_simple_glyph_padding(glyph_data: &[u8], num_coords: u16) -> usize {
-    let mut coord_bytes: usize = 0;
-    let mut coords_with_flags: u16 = 0;
-    let length = glyph_data.len();
-    let mut i: usize = 0;
-    while i < length {
-        let flag = SimpleGlyphFlags::from_bits_truncate(glyph_data[i]);
-        i += 1;
+    const REPEAT: u8 = SimpleGlyphFlags::REPEAT_FLAG.bits();
+    // Flags are processed in runs of up to this many bytes.
+    const RUN: usize = 64;
 
-        let mut repeat: u8 = 1;
-        if flag.contains(SimpleGlyphFlags::REPEAT_FLAG) {
+    let num_coords = num_coords as usize;
+    let length = glyph_data.len();
+    let mut coord_bytes: usize = 0;
+    let mut coords_with_flags: usize = 0;
+    let mut i: usize = 0;
+    while i < length && coords_with_flags < num_coords {
+        // A flag without REPEAT_FLAG describes exactly one point, so a run of such
+        // flags, capped at the number of points left, can be summed in bulk. This
+        // is the hot loop for glyphs with many points; the bulk sum vectorizes.
+        let n = (num_coords - coords_with_flags).min(length - i).min(RUN);
+        let run = &glyph_data[i..i + n];
+        let k = if run.iter().fold(0, |acc, f| acc | f) & REPEAT == 0 {
+            n
+        } else {
+            run.iter().position(|f| f & REPEAT != 0).unwrap_or(n)
+        };
+        // at most RUN * 4 = 256, so summing in u16 is enough and vectorizes well
+        coord_bytes += run[..k]
+            .iter()
+            .map(|&f| coord_bytes_for_flag(f) as u16)
+            .sum::<u16>() as usize;
+        coords_with_flags += k;
+        i += k;
+
+        if k < n {
+            // glyph_data[i] has REPEAT_FLAG
+            let flag_byte = glyph_data[i];
+            i += 1;
             if i >= length {
                 return 0;
             }
-            repeat = glyph_data[i] + 1;
+            let repeat = glyph_data[i] as usize + 1;
             i += 1;
-        }
-
-        let mut x_bytes: u8 = 0;
-        let mut y_bytes: u8 = 0;
-        if flag.contains(SimpleGlyphFlags::X_SHORT_VECTOR) {
-            x_bytes = 1;
-        } else if !flag.contains(SimpleGlyphFlags::X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR) {
-            x_bytes = 2;
-        }
-
-        if flag.contains(SimpleGlyphFlags::Y_SHORT_VECTOR) {
-            y_bytes = 1;
-        } else if !flag.contains(SimpleGlyphFlags::Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR) {
-            y_bytes = 2;
-        }
-
-        coord_bytes += ((x_bytes + y_bytes) * repeat) as usize;
-        coords_with_flags += repeat as u16;
-        if coords_with_flags >= num_coords {
-            break;
+            coord_bytes += coord_bytes_for_flag(flag_byte) as usize * repeat;
+            coords_with_flags += repeat;
         }
     }
 
     if num_coords != coords_with_flags {
         return 0;
     }
-    i += coord_bytes;
-    i
+    i + coord_bytes
+}
+
+/// Number of x and y coordinate bytes for one point with this flag, computed
+/// without branches or a table lookup so it vectorizes.
+#[inline]
+fn coord_bytes_for_flag(flag: u8) -> u8 {
+    // x: 1 byte if X_SHORT (0x02), else 0 if X_IS_SAME (0x10), else 2
+    // y: 1 byte if Y_SHORT (0x04), else 0 if Y_IS_SAME (0x20), else 2
+    let x_short = (flag >> 1) & 1;
+    let y_short = (flag >> 2) & 1;
+    let x_long = ((flag >> 1) | (flag >> 4)) & 1 ^ 1;
+    let y_long = ((flag >> 2) | (flag >> 5)) & 1 ^ 1;
+    x_short + y_short + 2 * (x_long + y_long)
 }
 
 struct GlyfAccelerator<'a> {
@@ -1414,6 +1519,127 @@ fn get_points_harfbuzz_standalone(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// The original, flag-at-a-time implementation, kept as a reference.
+    fn reference_trim_simple_glyph_padding(glyph_data: &[u8], num_coords: u16) -> usize {
+        const COORD_BYTES: [u8; 256] = {
+            let mut table = [0u8; 256];
+            let mut i = 0;
+            while i < 256 {
+                let x = if (i & 0x02) != 0 {
+                    1
+                } else if (i & 0x10) == 0 {
+                    2
+                } else {
+                    0
+                };
+                let y = if (i & 0x04) != 0 {
+                    1
+                } else if (i & 0x20) == 0 {
+                    2
+                } else {
+                    0
+                };
+                table[i] = x + y;
+                i += 1;
+            }
+            table
+        };
+
+        let mut coord_bytes: usize = 0;
+        let mut coords_with_flags: u32 = 0;
+        let length = glyph_data.len();
+        let mut i: usize = 0;
+        while i < length {
+            let flag_byte = glyph_data[i];
+            i += 1;
+            let mut repeat: u32 = 1;
+            if flag_byte & SimpleGlyphFlags::REPEAT_FLAG.bits() != 0 {
+                if i >= length {
+                    return 0;
+                }
+                repeat = glyph_data[i] as u32 + 1;
+                i += 1;
+            }
+            coord_bytes += COORD_BYTES[flag_byte as usize] as usize * repeat as usize;
+            coords_with_flags += repeat;
+            if coords_with_flags >= num_coords as u32 {
+                break;
+            }
+        }
+        if num_coords as u32 != coords_with_flags {
+            return 0;
+        }
+        i + coord_bytes
+    }
+
+    #[test]
+    fn coord_bytes_for_flag_matches_spec() {
+        for flag in 0..=255u8 {
+            let x = if flag & 0x02 != 0 {
+                1
+            } else if flag & 0x10 == 0 {
+                2
+            } else {
+                0
+            };
+            let y = if flag & 0x04 != 0 {
+                1
+            } else if flag & 0x20 == 0 {
+                2
+            } else {
+                0
+            };
+            assert_eq!(coord_bytes_for_flag(flag), x + y, "flag {flag:#04x}");
+        }
+    }
+
+    #[test]
+    fn trim_simple_glyph_padding_matches_reference() {
+        // deterministic pseudo-random flag streams with varying repeat density,
+        // point counts around the real one, and truncated/padded data
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for case in 0..2000 {
+            let repeat_one_in = [1, 2, 8, 64, u64::MAX][case % 5];
+            let num_flags = (next() % 300) as usize;
+            let mut data = Vec::new();
+            let mut points = 0u32;
+            for _ in 0..num_flags {
+                let mut flag = (next() as u8) & !SimpleGlyphFlags::REPEAT_FLAG.bits();
+                if next() % repeat_one_in == 0 {
+                    flag |= SimpleGlyphFlags::REPEAT_FLAG.bits();
+                    let repeat = next() as u8;
+                    data.push(flag);
+                    data.push(repeat);
+                    points += repeat as u32 + 1;
+                } else {
+                    data.push(flag);
+                    points += 1;
+                }
+            }
+            // coordinate bytes plus up to 3 bytes of padding, sometimes truncated
+            let extra = (next() % 600) as usize;
+            data.extend(std::iter::repeat_n(0u8, extra));
+            let num_coords = match next() % 4 {
+                0 => points.saturating_sub(1),
+                1 => points + 1,
+                _ => points,
+            }
+            .min(u16::MAX as u32) as u16;
+            assert_eq!(
+                trim_simple_glyph_padding(&data, num_coords),
+                reference_trim_simple_glyph_padding(&data, num_coords),
+                "case {case}"
+            );
+        }
+    }
+
     #[test]
     fn test_subset_simple_glyph_trim_padding() {
         let plan = Plan::default();
