@@ -59,8 +59,9 @@ use font_types::{Offset16, Point};
 use gdef::CollectUsedMarkSets;
 use inc_bimap::IncBiMap;
 use layout::{
-    collect_features_with_retained_subs, collect_variable_feature_indices, find_duplicate_features,
-    prune_features, remap_feature_indices, PruneLangSysContext, SubsetLayoutContext,
+    collect_feature_variations_name_ids, collect_features_with_retained_subs,
+    collect_variable_feature_indices, find_duplicate_features, prune_features,
+    remap_feature_indices, PruneLangSysContext, SubsetLayoutContext,
 };
 pub use parsing_util::{
     parse_instancing_spec, parse_name_ids, parse_name_languages, parse_tag_list, parse_unicodes,
