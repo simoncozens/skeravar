@@ -6,7 +6,31 @@ use read_fonts::{
     types::{GlyphId, NameId, Tag},
 };
 
-use crate::SubsetError;
+use crate::{FastHashMap, SubsetError};
+
+/// Parses a glyph mapping into `glyph_map`.
+///
+/// The input is a comma/whitespace-separated list of `old_gid:new_gid` pairs, as for
+/// hb-subset's `--gid-map`.
+///
+/// ref: <https://github.com/harfbuzz/harfbuzz/blob/a69b43c1f/util/hb-subset.cc#L725>
+pub fn parse_glyph_map(
+    input_str: &str,
+    glyph_map: &mut FastHashMap<GlyphId, GlyphId>,
+) -> Result<(), SubsetError> {
+    let parse_gid = |raw: &str| {
+        raw.parse::<u32>()
+            .map(GlyphId::new)
+            .map_err(|_| SubsetError::InvalidGid(raw.to_owned()))
+    };
+    for entry in input_str.split(&[',', ' ']).filter(|raw| !raw.is_empty()) {
+        let (old_gid, new_gid) = entry
+            .split_once(':')
+            .ok_or_else(|| SubsetError::InvalidGlyphMapEntry(entry.to_owned()))?;
+        glyph_map.insert(parse_gid(old_gid)?, parse_gid(new_gid)?);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct InstancingSpec {
@@ -391,5 +415,31 @@ fn test_parse_instancing_spec_value_forms_and_validation() {
     assert!(matches!(
         spec.axes.get(&Tag::new(b"wdth")),
         Some(AxisSpec::Range { min, def, max }) if *min == 100.0 && def.is_nan() && *max == 700.0
+    ));
+}
+
+#[test]
+fn test_parse_glyph_map() {
+    let mut glyph_map = FastHashMap::default();
+    parse_glyph_map("37:1,39:2 69:3", &mut glyph_map).unwrap();
+    // later entries are added, and override earlier ones for the same old glyph
+    parse_glyph_map("74:4, 37:5", &mut glyph_map).unwrap();
+    let mut entries: Vec<_> = glyph_map
+        .iter()
+        .map(|(old, new)| (old.to_u32(), new.to_u32()))
+        .collect();
+    entries.sort_unstable();
+    assert_eq!(entries, [(37, 5), (39, 2), (69, 3), (74, 4)]);
+
+    parse_glyph_map("", &mut glyph_map).unwrap();
+    assert_eq!(glyph_map.len(), 4);
+
+    assert!(matches!(
+        parse_glyph_map("37-1", &mut glyph_map),
+        Err(SubsetError::InvalidGlyphMapEntry(_))
+    ));
+    assert!(matches!(
+        parse_glyph_map("37:x", &mut glyph_map),
+        Err(SubsetError::InvalidGid(_))
     ));
 }

@@ -13,7 +13,10 @@ use read_fonts::{
     FontRef,
 };
 use similar::TextDiff;
-use skeravar::{parse_unicodes, subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
+use skeravar::{
+    parse_glyph_map, parse_unicodes, subset_font, FastHashMap, Plan, SubsetFlags,
+    DEFAULT_LAYOUT_FEATURES,
+};
 use skrifa::GlyphId;
 use std::{
     collections::{HashMap, HashSet},
@@ -76,6 +79,7 @@ struct SubsetInput {
     pub layout_scripts: IntSet<Tag>,
     pub layout_features: IntSet<Tag>,
     pub drop_tables: IntSet<Tag>,
+    pub glyph_map: FastHashMap<GlyphId, GlyphId>,
 }
 
 #[derive(Default)]
@@ -238,6 +242,7 @@ fn parse_profile_options(file_name: &str) -> SubsetInput {
     let mut gids = IntSet::empty();
 
     let mut drop_tables = IntSet::<Tag>::empty();
+    let mut glyph_map = FastHashMap::<GlyphId, GlyphId>::default();
 
     let mut layout_scripts = IntSet::<Tag>::empty();
     layout_scripts.invert();
@@ -287,6 +292,12 @@ fn parse_profile_options(file_name: &str) -> SubsetInput {
                     "--name-languages" => parse_list(list, &mut name_languages, action, |s| {
                         s.parse::<u16>().unwrap()
                     }),
+                    "--gid-map" => {
+                        if action == Some(false) {
+                            glyph_map.clear();
+                        }
+                        parse_glyph_map(list, &mut glyph_map).unwrap();
+                    }
                     _ => continue,
                 }
             }
@@ -300,6 +311,7 @@ fn parse_profile_options(file_name: &str) -> SubsetInput {
         layout_scripts,
         layout_features,
         drop_tables,
+        glyph_map,
     }
 }
 
@@ -545,7 +557,7 @@ fn gen_subset_font_file(
 
     let instancing_spec = instance.and_then(|inst| parse_instancing_spec(inst).ok());
 
-    let plan = Plan::new(
+    let plan = Plan::new_with_glyph_map(
         &profile.gids,
         &unicodes,
         &font,
@@ -555,8 +567,10 @@ fn gen_subset_font_file(
         &profile.layout_features,
         &profile.name_ids,
         &profile.name_languages,
+        &profile.glyph_map,
         &instancing_spec,
-    );
+    )
+    .unwrap();
 
     let subset_output = subset_font(&font, &plan).unwrap();
     std::fs::write(output_file, subset_output).unwrap();
