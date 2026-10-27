@@ -135,6 +135,15 @@ struct ListArgs {
     #[arg(long = "unicodes-", hide = true)]
     unicodes_remove: Vec<String>,
 
+    /// Text whose Unicode characters will be included in the subset. Use --text+=... or
+    /// --text-=... to add to or remove from the set
+    #[arg(short = 't', long)]
+    text: Vec<String>,
+    #[arg(long = "text+", hide = true)]
+    text_add: Vec<String>,
+    #[arg(long = "text-", hide = true)]
+    text_remove: Vec<String>,
+
     /// Drop the specified tables. Use --drop-tables+=... or --drop-tables-=... to add to or
     /// remove from the default set
     #[arg(long)]
@@ -297,7 +306,19 @@ fn main() {
     } else {
         IntSet::empty()
     };
-    apply_list_args(&matches, "unicodes", &mut unicodes, parse_unicodes);
+    let mut unicode_args: Vec<_> = list_args(&matches, "unicodes")
+        .into_iter()
+        .map(|(index, op, arg)| (index, op, arg, parse_unicodes as _))
+        .collect();
+    unicode_args.extend(
+        list_args(&matches, "text")
+            .into_iter()
+            .map(|(index, op, arg)| (index, op, arg, parse_text as _)),
+    );
+    unicode_args.sort_unstable_by_key(|(index, _, _, _)| *index);
+    for (_, op, arg, parse) in unicode_args {
+        apply_list_arg(&mut unicodes, op, arg, parse);
+    }
 
     let instancing_spec = match &args.variations {
         Some(variations_input) => match parse_instancing_spec(variations_input) {
@@ -496,4 +517,8 @@ fn parse_subset_flags(args: &Args) -> SubsetFlags {
         flags |= SubsetFlags::SUBSET_FLAGS_UPDATE_NAME_TABLE;
     }
     flags
+}
+
+fn parse_text(input: &str) -> Result<IntSet<u32>, SubsetError> {
+    Ok(input.chars().map(u32::from).collect())
 }
