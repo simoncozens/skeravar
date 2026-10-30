@@ -23,6 +23,7 @@ mod hmtx;
 mod hvar;
 mod inc_bimap;
 mod layout;
+mod math;
 mod maxp;
 mod metrics;
 mod mvar;
@@ -96,7 +97,8 @@ use read_fonts::{
         hmtx::{Hmtx, HmtxExtended},
         hvar::Hvar,
         loca::Loca,
-        maxp::Maxp,
+        math::Math,
+        maxp::{Maxp, MaxpExtended},
         mvar::Mvar,
         name::Name,
         os2::Os2,
@@ -379,6 +381,8 @@ impl std::ops::BitOrAssign for SubsetFlags {
 pub struct Plan {
     unicodes: IntSet<u32>,
     glyphs_requested: IntSet<GlyphId>,
+    glyphset_cmaped: IntSet<GlyphId>,
+    glyphset_mathed: IntSet<GlyphId>,
     glyphset_gsub: IntSet<GlyphId>,
     glyphset_colred: IntSet<GlyphId>,
     glyphset: IntSet<GlyphId>,
@@ -1028,12 +1032,18 @@ impl Plan {
             dmap.as_cmap()
                 .closure_glyphs(&self.unicodes, &mut self.glyphset_gsub);
         }
+        self.glyphset_cmaped = self.glyphset_gsub.clone();
+
+        // HarfBuzz closes math variants before layout, color and components.
+        if !self.drop_tables.contains(Math::TAG) {
+            math::closure(font, &mut self.glyphset_gsub);
+            remove_invalid_gids(&mut self.glyphset_gsub, self.font_num_glyphs);
+        }
+        self.glyphset_mathed = self.glyphset_gsub.clone();
 
         // layout closure
         self.layout_populate_gids_to_retain(font);
         remove_invalid_gids(&mut self.glyphset_gsub, self.font_num_glyphs);
-
-        //skip glyph closure for MATH table, it's not supported yet
 
         //glyph closure for COLR
         if !self.drop_tables.contains(Tag::new(b"COLR")) {
@@ -1336,6 +1346,11 @@ impl Plan {
                         &mut varidx_set,
                     );
                 }
+            }
+        }
+        if !self.drop_tables.contains(Math::TAG) {
+            if let Ok(math) = font.math() {
+                math.collect_variation_indices(self, &mut varidx_set);
             }
         }
 
@@ -2267,6 +2282,10 @@ fn subset_table<'a>(
                     .subset(plan, font, s, builder)
             }
         }
+        Math::TAG => font
+            .math()
+            .map_err(|_| SubsetError::SubsetTableError(Math::TAG))?
+            .subset(plan, font, s, builder),
         Base::TAG => font
             .base()
             .map_err(|_| SubsetError::SubsetTableError(Base::TAG))?

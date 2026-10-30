@@ -68,6 +68,7 @@ fn compute_pair_set_effective_formats(
     pair_set_info: &mut PairSetInfo,
     strip_hints: bool,
     strip_empty: bool,
+    is_instancing: bool,
     plan: &Plan,
 ) -> Result<(), ReadError> {
     if !pair_set.complete() {
@@ -90,16 +91,24 @@ fn compute_pair_set_effective_formats(
         }
 
         let value_record1 = ValueRecord::new(font_data, offset + pair_set.width(), value_format1);
-        *new_format1 |=
-            compute_effective_format(&value_record1, strip_hints, strip_empty, Some(plan));
+        *new_format1 |= compute_effective_format(
+            &value_record1,
+            strip_hints,
+            strip_empty,
+            if is_instancing { Some(plan) } else { None },
+        );
 
         let value_record2 = ValueRecord::new(
             font_data,
             offset + pair_set.width() + record1_size,
             value_format2,
         );
-        *new_format2 |=
-            compute_effective_format(&value_record2, strip_hints, strip_empty, Some(plan));
+        *new_format2 |= compute_effective_format(
+            &value_record2,
+            strip_hints,
+            strip_empty,
+            if is_instancing { Some(plan) } else { None },
+        );
     }
     Ok(())
 }
@@ -109,6 +118,7 @@ fn compute_effective_pair_formats_1(
     pair_set_info: &mut PairSetInfo,
     strip_hints: bool,
     strip_empty: bool,
+    is_instancing: bool,
     plan: &Plan,
 ) -> Result<(), ReadError> {
     let (coverage, pair_sets, pair_set_count, value_format1, value_format2) = (
@@ -134,6 +144,7 @@ fn compute_effective_pair_formats_1(
                     pair_set_info,
                     strip_hints,
                     strip_empty,
+                    is_instancing,
                     plan,
                 )?;
                 if pair_set_info.new_format1 == value_format1
@@ -159,6 +170,7 @@ fn compute_effective_pair_formats_1(
                 pair_set_info,
                 strip_hints,
                 strip_empty,
+                is_instancing,
                 plan,
             )?;
             if pair_set_info.new_format1 == value_format1
@@ -347,6 +359,7 @@ macro_rules! subset_glyph_pairs {
                         &mut pair_set_info,
                         false,
                         false,
+                        true,
                         plan,
                     )
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
@@ -366,6 +379,7 @@ macro_rules! subset_glyph_pairs {
                         &mut pair_set_info,
                         strip_hints,
                         true,
+                        false,
                         plan,
                     )
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
@@ -452,6 +466,7 @@ fn compute_effective_pair_formats_2(
     class2_idxes: &[u16],
     strip_hints: bool,
     strip_empty: bool,
+    is_instancing: bool,
     plan: &Plan,
 ) -> Result<(), ReadError> {
     let (
@@ -484,10 +499,18 @@ fn compute_effective_pair_formats_2(
             let record1 = ValueRecord::new(font_data, offset, value_format1);
             let record2 = ValueRecord::new(font_data, offset + record1_size, value_format2);
 
-            *new_format1 |=
-                compute_effective_format(&record1, strip_hints, strip_empty, Some(plan));
-            *new_format2 |=
-                compute_effective_format(&record2, strip_hints, strip_empty, Some(plan));
+            *new_format1 |= compute_effective_format(
+                &record1,
+                strip_hints,
+                strip_empty,
+                if is_instancing { Some(plan) } else { None },
+            );
+            *new_format2 |= compute_effective_format(
+                &record2,
+                strip_hints,
+                strip_empty,
+                if is_instancing { Some(plan) } else { None },
+            );
         }
         if *new_format1 == value_format1 && *new_format2 == value_format2 {
             break;
@@ -640,6 +663,7 @@ macro_rules! subset_class_pairs {
                         &class2_idxes,
                         false,
                         false,
+                        true,
                         plan,
                     )
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
@@ -660,6 +684,7 @@ macro_rules! subset_class_pairs {
                         &class2_idxes,
                         strip_hints,
                         true,
+                        false,
                         plan,
                     )
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;

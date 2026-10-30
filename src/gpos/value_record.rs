@@ -27,100 +27,85 @@ pub(crate) fn compute_effective_format(
     strip_empty: bool,
     plan: Option<&Plan>,
 ) -> ValueFormat {
-    let mut value_format = ValueFormat::empty();
+    let mut effective = value_record.format();
 
-    if let Some(x_placement) = value_record.x_placement() {
-        if !strip_empty || x_placement != 0 {
-            value_format |= ValueFormat::X_PLACEMENT;
-        }
+    if strip_hints {
+        effective -= ValueFormat::ANY_DEVICE_OR_VARIDX;
     }
 
-    if let Some(y_placement) = value_record.y_placement() {
-        if !strip_empty || y_placement != 0 {
-            value_format |= ValueFormat::Y_PLACEMENT;
-        }
-    }
-
-    if let Some(x_advance) = value_record.x_advance() {
-        if !strip_empty || x_advance != 0 {
-            value_format |= ValueFormat::X_ADVANCE;
-        }
-    }
-
-    if let Some(y_advance) = value_record.y_advance() {
-        if !strip_empty || y_advance != 0 {
-            value_format |= ValueFormat::Y_ADVANCE;
-        }
-    }
+    let devices = [
+        (
+            ValueFormat::X_PLACEMENT_DEVICE,
+            value_record.x_placement_device(),
+        ),
+        (
+            ValueFormat::Y_PLACEMENT_DEVICE,
+            value_record.y_placement_device(),
+        ),
+        (
+            ValueFormat::X_ADVANCE_DEVICE,
+            value_record.x_advance_device(),
+        ),
+        (
+            ValueFormat::Y_ADVANCE_DEVICE,
+            value_record.y_advance_device(),
+        ),
+    ];
 
     if !strip_hints {
-        if let Some(device) = value_record.x_placement_device() {
-            update_var_flag(
-                Some(device),
-                ValueFormat::X_PLACEMENT_DEVICE,
-                &mut value_format,
-                plan,
-            );
-        }
-        if let Some(device) = value_record.y_placement_device() {
-            update_var_flag(
-                Some(device),
-                ValueFormat::Y_PLACEMENT_DEVICE,
-                &mut value_format,
-                plan,
-            );
-        }
-        if let Some(device) = value_record.x_advance_device() {
-            update_var_flag(
-                Some(device),
-                ValueFormat::X_ADVANCE_DEVICE,
-                &mut value_format,
-                plan,
-            );
-        }
-        if let Some(device) = value_record.y_advance_device() {
-            update_var_flag(
-                Some(device),
-                ValueFormat::Y_ADVANCE_DEVICE,
-                &mut value_format,
-                plan,
-            );
-        }
-    }
-    value_format
-}
-
-fn update_var_flag(
-    value: Option<Result<DeviceOrVariationIndex<'_>, ReadError>>,
-    flag: ValueFormat,
-    format: &mut ValueFormat,
-    plan: Option<&Plan>,
-) {
-    if let Some(plan_ref) = plan {
-        let varidx_map = plan_ref.layout_varidx_delta_map.borrow();
-
-        if let Some(varidx) = value.transpose().ok().flatten() {
-            match varidx {
-                DeviceOrVariationIndex::Device(_device) => {
-                    // For device tables, we conservatively assume they may have non-zero deltas and keep the flag
-                    *format |= flag;
+        if let Some(plan) = plan {
+            // Instancing: drop device fields whose variation index is not
+            // retained, or that have no offset at all.
+            let varidx_map = plan.layout_varidx_delta_map.borrow();
+            for (flag, device) in devices {
+                if !effective.contains(flag) {
+                    continue;
                 }
-                DeviceOrVariationIndex::VariationIndex(varidx) => {
-                    let ix = varidx.delta_set_inner_index() as u32
-                        | ((varidx.delta_set_outer_index() as u32) << 16);
-                    if let Some((first, _)) = varidx_map.get(&ix) {
-                        if *first != NO_VARIATION_INDEX {
-                            *format |= flag;
-                            return;
-                        }
+                let device = match device {
+                    Some(Ok(device)) => device,
+                    // Null or unreadable offsets produce no output.
+                    _ => {
+                        effective -= flag;
+                        continue;
                     }
+                };
+                // Plain device tables are kepty as they may have non-zero deltas.
+                let DeviceOrVariationIndex::VariationIndex(varidx) = device else {
+                    continue;
+                };
+                let ix = varidx.delta_set_inner_index() as u32
+                    | ((varidx.delta_set_outer_index() as u32) << 16);
+                match varidx_map.get(&ix) {
+                    Some((first, _)) if *first != NO_VARIATION_INDEX => {}
+                    _ => effective -= flag,
                 }
             }
-            *format &= !flag;
+        } else if strip_empty {
+            // Drop device fields with a null offset.
+            for (flag, device) in devices {
+                if device.is_none() {
+                    effective -= flag;
+                }
+            }
         }
-    } else {
-        *format |= flag;
     }
+
+    if strip_empty {
+        if value_record.x_placement().unwrap_or(0) == 0 {
+            effective -= ValueFormat::X_PLACEMENT;
+        }
+        if value_record.y_placement().unwrap_or(0) == 0 {
+            effective -= ValueFormat::Y_PLACEMENT;
+        }
+        if value_record.x_advance().unwrap_or(0) == 0 {
+            effective -= ValueFormat::X_ADVANCE;
+        }
+        if value_record.y_advance().unwrap_or(0) == 0 {
+            effective -= ValueFormat::Y_ADVANCE;
+        }
+    }
+
+    effective
 }
 
 /// Apply delta to a base value if applicable during instancing.
@@ -279,6 +264,123 @@ impl CollectVariationIndices for ValueRecord<'_> {
         .flatten()
         {
             device.collect_variation_indices(plan, varidx_set);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use read_fonts::FontData;
+
+    const ALL: ValueFormat = ValueFormat::from_bits_truncate(0x00FF);
+
+    /// A record in `ALL` format: four values then four device offsets.
+    fn record(bytes: &[u8]) -> ValueRecord<'_> {
+        ValueRecord::new(FontData::new(bytes), 0, ALL)
+    }
+
+    /// Bytes for a record whose every field is zero.
+    const EMPTY: [u8; 16] = [0; 16];
+
+    /// x_placement = 1, x_placement_device -> 12; everything else zero.
+    const PARTLY_SET: [u8; 16] = [0, 1, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0];
+
+    #[test]
+    fn keeps_everything_when_stripping_nothing() {
+        // with neither flag set the format is reported as-is, even for fields
+        // that are zero: the caller has not asked for anything to be dropped
+        assert_eq!(
+            compute_effective_format(&record(&EMPTY), false, false, None),
+            ALL
+        );
+        assert_eq!(
+            compute_effective_format(&record(&PARTLY_SET), false, false, None),
+            ALL
+        );
+    }
+
+    #[test]
+    fn strip_empty_drops_zero_values_and_null_offsets() {
+        // an all-zero record keeps nothing
+        assert_eq!(
+            compute_effective_format(&record(&EMPTY), false, true, None),
+            ValueFormat::empty()
+        );
+        // and only the two fields that are actually set survive
+        assert_eq!(
+            compute_effective_format(&record(&PARTLY_SET), false, true, None),
+            ValueFormat::X_PLACEMENT | ValueFormat::X_PLACEMENT_DEVICE
+        );
+    }
+
+    #[test]
+    fn strip_hints_drops_devices_however_they_are_set() {
+        // device fields go whether or not their offsets are null, and whether
+        // or not empty fields are being stripped
+        assert_eq!(
+            compute_effective_format(&record(&PARTLY_SET), true, false, None),
+            ALL - ValueFormat::ANY_DEVICE_OR_VARIDX
+        );
+        assert_eq!(
+            compute_effective_format(&record(&PARTLY_SET), true, true, None),
+            ValueFormat::X_PLACEMENT
+        );
+    }
+
+    /// Fields absent from the format are never reported present, whatever the
+    /// bytes underneath happen to say.
+    #[test]
+    fn absent_fields_stay_absent() {
+        let format = ValueFormat::Y_ADVANCE | ValueFormat::Y_ADVANCE_DEVICE;
+        let bytes = [0u8, 7, 0, 12];
+        let rec = ValueRecord::new(FontData::new(&bytes), 0, format);
+        assert_eq!(compute_effective_format(&rec, false, true, None), format);
+        assert_eq!(
+            compute_effective_format(&rec, true, true, None),
+            ValueFormat::Y_ADVANCE
+        );
+    }
+
+    #[test]
+    fn positioning_survives_unmappable_variation_devices() {
+        use read_fonts::tables::variations::NO_VARIATION_INDEX;
+        use write_fonts::tables::{gpos::ValueRecord as OwnedValue, layout::VariationIndex};
+
+        for (index, mapped, expected) in [
+            ((1, 2), None, None),
+            ((0xffff, 0xffff), None, None),
+            ((1, 2), Some(NO_VARIATION_INDEX), None),
+            ((1, 2), Some(0x30004), Some((3, 4))),
+        ] {
+            let source = OwnedValue::new()
+                .with_x_advance(40)
+                .with_x_advance_device(VariationIndex::new(index.0, index.1));
+            let format = source.format();
+            let source = write_fonts::dump_table(&source).unwrap();
+            let value = ValueRecord::new(FontData::new(&source), 0, format);
+            let mut plan = Plan::default();
+            if let Some(mapped) = mapped {
+                // All mapped cases use source (1, 2): (outer << 16) | inner.
+                plan.layout_varidx_delta_map
+                    .borrow_mut()
+                    .insert(0x10002, (mapped, 0));
+            }
+            let mut s = Serializer::new(64);
+            s.start_serialize().unwrap();
+            value.subset(&plan, &mut s, format).unwrap();
+            s.end_serialize();
+
+            let bytes = s.copy_bytes();
+            let value = ValueRecord::new(FontData::new(&bytes), 0, format);
+            assert_eq!(value.x_advance(), Some(40));
+            let actual = value.x_advance_device().map(|device| {
+                let DeviceOrVariationIndex::VariationIndex(index) = device.unwrap() else {
+                    panic!("expected variation index")
+                };
+                (index.delta_set_outer_index(), index.delta_set_inner_index())
+            });
+            assert_eq!(actual, expected);
         }
     }
 }

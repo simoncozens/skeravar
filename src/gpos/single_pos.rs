@@ -89,7 +89,7 @@ macro_rules! single_value_position {
                     } else {
                         true
                     };
-                    compute_effective_format(&value_record, strip_hints, true, Some(plan))
+                    compute_effective_format(&value_record, strip_hints, true, None)
                 } else {
                     self.value_format()
                 };
@@ -167,7 +167,7 @@ fn compute_new_value_format(
         for i in retained_rec_idxes.iter() {
             let offset = records_offset + i as usize * record_size;
             let value_record = ValueRecord::new(font_data, offset, value_format);
-            *new_format |= compute_effective_format(&value_record, strip_hints, true, Some(plan));
+            *new_format |= compute_effective_format(&value_record, strip_hints, true, None);
         }
     } else {
         *new_format = value_format;
