@@ -396,7 +396,7 @@ mod test {
             .borrow_mut()
             .insert(0x820018_u32, (0x40000_u32, 0));
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
 
         markbasepos_table
@@ -468,7 +468,7 @@ mod test {
             .borrow_mut()
             .insert(0x860011_u32, (0x70000_u32, 0));
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
 
         markbasepos_table

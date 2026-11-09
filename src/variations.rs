@@ -2617,7 +2617,7 @@ mod test {
         plan.layout_features
             .extend(DEFAULT_LAYOUT_FEATURES.iter().copied());
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
         let ret = item_varstore.subset(
             &plan,

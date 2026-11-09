@@ -115,6 +115,10 @@ impl Subset for Glyf<'_> {
                     subset_glyphs.push(subset_glyph);
                 }
                 None => {
+                    // A loca range that is reversed or past the end of glyf
+                    // makes the glyph unreadable; report it as an error rather
+                    // than silently treating the glyph as empty.
+                    s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR);
                     return Err(SubsetTableError(Glyf::TAG));
                 }
             }
@@ -525,7 +529,7 @@ struct GlyfAccelerator<'a> {
     loca: Loca<'a>,
     head: Head<'a>,
     instance_deltas: &'a FastHashMap<GlyphId, Vec<Point<f32>>>, // *new* GID deltas
-    hmtx: skrifa::raw::tables::hmtx::Hmtx<'a>,
+    hmtx: Option<skrifa::raw::tables::hmtx::Hmtx<'a>>,
     vmtx: Option<skrifa::raw::tables::vmtx::Vmtx<'a>>,
     glyf: Glyf<'a>,
     glyph_map: &'a FastHashMap<GlyphId, GlyphId>,
@@ -537,7 +541,9 @@ impl<'a> GlyfAccelerator<'a> {
             .loca(None)
             .expect("glyf/loca tables are required for subsetting");
         let head = font.head().expect("head table is required for subsetting");
-        let hmtx = font.hmtx().expect("hmtx table is required for subsetting");
+        // hmtx is only needed to compute phantom points, which only matter when
+        // instancing; fonts without it (e.g. malformed test fonts) still subset.
+        let hmtx = font.hmtx().ok();
         let vmtx = font.vmtx().ok();
         let glyf = font.glyf().expect("glyf table is required for subsetting");
 
@@ -553,7 +559,10 @@ impl<'a> GlyfAccelerator<'a> {
     }
 
     fn left_side_bearing(&self, gid: GlyphId) -> f32 {
-        self.hmtx.side_bearing(gid).unwrap_or(0) as f32
+        self.hmtx
+            .as_ref()
+            .and_then(|hmtx| hmtx.side_bearing(gid))
+            .unwrap_or(0) as f32
     }
 
     fn top_side_bearing(&self, gid: GlyphId) -> f32 {
@@ -563,7 +572,10 @@ impl<'a> GlyfAccelerator<'a> {
     }
 
     fn advance_width(&self, gid: GlyphId) -> f32 {
-        self.hmtx.advance(gid).unwrap_or(0) as f32
+        self.hmtx
+            .as_ref()
+            .and_then(|hmtx| hmtx.advance(gid))
+            .unwrap_or(0) as f32
     }
 
     fn vertical_advance(&self, gid: GlyphId) -> f32 {
@@ -1684,6 +1696,86 @@ mod test {
             [
                 0xff, 0xff, 0x2, 0x26, 0x0, 0x7d, 0x3, 0x20, 0x0, 0xc8, 0x0, 0x46, 0x0, 0x2, 0x32,
                 0x32, 0x7f, 0xff, 0x60, 0x0
+            ]
+        );
+    }
+
+    #[test]
+    fn test_subset_composite_glyph_set_overlaps_flag() {
+        let mut plan = Plan {
+            subset_flags: SubsetFlags::SUBSET_FLAGS_SET_OVERLAPS_FLAG,
+            ..Default::default()
+        };
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+
+        let loca = font.loca(None).unwrap();
+        let glyf = font.glyf().unwrap();
+        let glyph = loca
+            .get(GlyphId::from(4_u16), &glyf)
+            .and_then(|g| g.into_glyph())
+            .unwrap();
+        plan.glyph_map
+            .insert(GlyphId::from(1_u16), GlyphId::from(2_u16));
+
+        let subset_output = subset_glyph(Some(&glyph), &plan);
+        assert_eq!(subset_output.len(), 20);
+        // Flag at offset 10..12 is changed from 0x0046 to 0x0446 (OVERLAP_COMPOUND = 0x0400)
+        assert_eq!(
+            subset_output,
+            [
+                0xff, 0xff, 0x2, 0x26, 0x0, 0x7d, 0x3, 0x20, 0x0, 0xc8, 0x4, 0x46, 0x0, 0x2, 0x32,
+                0x32, 0x7f, 0xff, 0x60, 0x0
+            ]
+        );
+    }
+
+    #[test]
+    fn test_subset_composite_glyph_drop_hints() {
+        use read_fonts::{FontData, FontRead};
+
+        // Composite glyph with WE_HAVE_INSTRUCTIONS (0x0100) and 2 bytes instructions:
+        let raw = [
+            0xff, 0xff, // numberOfContours = -1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x64, // bbox (8 bytes)
+            0x01, 0x01, // flags = ARG_1_AND_2_ARE_WORDS | WE_HAVE_INSTRUCTIONS
+            0x00, 0x01, // component gid = 1
+            0x00, 0x00, 0x00, 0x00, // args (4 bytes)
+            0x00, 0x02, // num_instructions = 2
+            0xaa, 0xbb, // instructions (2 bytes)
+            0x00, 0x00, // padding (2 bytes)
+        ];
+
+        let comp = CompositeGlyph::read(FontData::new(&raw)).unwrap();
+        let glyph = Glyph::Composite(comp);
+
+        let mut plan = Plan::default();
+        plan.glyph_map
+            .insert(GlyphId::from(1_u16), GlyphId::from(5_u16));
+
+        // When hinting is retained, instructions are kept and padding is trimmed:
+        let subset_retained = subset_glyph(Some(&glyph), &plan);
+        assert_eq!(subset_retained.len(), 22);
+        assert_eq!(
+            subset_retained,
+            [
+                0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x64, 0x01,
+                0x01, // WE_HAVE_INSTRUCTIONS retained
+                0x00, 0x05, // remapped gid = 5
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xaa, 0xbb,
+            ]
+        );
+
+        // When SUBSET_FLAGS_NO_HINTING is set, instructions are dropped and flag cleared:
+        plan.subset_flags = SubsetFlags::SUBSET_FLAGS_NO_HINTING;
+        let subset_dropped = subset_glyph(Some(&glyph), &plan);
+        assert_eq!(subset_dropped.len(), 18);
+        assert_eq!(
+            subset_dropped,
+            [
+                0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x64, 0x00,
+                0x01, // WE_HAVE_INSTRUCTIONS cleared
+                0x00, 0x05, // remapped gid = 5
+                0x00, 0x00, 0x00, 0x00,
             ]
         );
     }

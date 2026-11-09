@@ -991,7 +991,7 @@ mod test {
         plan.glyphset_gsub.insert(GlyphId::from(6292_u32));
         plan.glyphset_gsub.insert(GlyphId::from(6298_u32));
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
 
         pairpos_table
@@ -1041,7 +1041,7 @@ mod test {
         plan.glyphset_gsub.insert(GlyphId::from(168_u32));
         plan.glyphset_gsub.insert(GlyphId::from(6736_u32));
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
 
         pairpos_table
@@ -1074,7 +1074,7 @@ mod test {
         plan.glyphset_gsub.insert(GlyphId::from(168_u32));
         plan.glyphset_gsub.insert(GlyphId::from(6736_u32));
 
-        let mut s = Serializer::new(1024);
+        let mut s = Serializer::new(1024).unwrap();
         assert_eq!(s.start_serialize(), Ok(()));
 
         pairpos_table

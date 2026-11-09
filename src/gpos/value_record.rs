@@ -347,10 +347,13 @@ mod test {
         use read_fonts::tables::variations::NO_VARIATION_INDEX;
         use write_fonts::tables::{gpos::ValueRecord as OwnedValue, layout::VariationIndex};
 
+        // An index mapped to NO_VARIATION_INDEX is still written out as
+        // (0xffff, 0xffff), like Harfbuzz does; only unmapped indices are
+        // dropped.
         for (index, mapped, expected) in [
             ((1, 2), None, None),
             ((0xffff, 0xffff), None, None),
-            ((1, 2), Some(NO_VARIATION_INDEX), None),
+            ((1, 2), Some(NO_VARIATION_INDEX), Some((0xffff, 0xffff))),
             ((1, 2), Some(0x30004), Some((3, 4))),
         ] {
             let source = OwnedValue::new()
@@ -366,7 +369,7 @@ mod test {
                     .borrow_mut()
                     .insert(0x10002, (mapped, 0));
             }
-            let mut s = Serializer::new(64);
+            let mut s = Serializer::new(64).unwrap();
             s.start_serialize().unwrap();
             value.subset(&plan, &mut s, format).unwrap();
             s.end_serialize();

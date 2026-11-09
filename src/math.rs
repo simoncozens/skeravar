@@ -735,7 +735,7 @@ mod tests {
         plan.layout_varidx_delta_map
             .borrow_mut()
             .insert(0x10002, (0x30004, 5));
-        let mut serializer = Serializer::new(64);
+        let mut serializer = Serializer::new(64).unwrap();
         serializer.start_serialize().unwrap();
         value.subset(&plan, &mut serializer, source_data).unwrap();
         serializer.end_serialize();
@@ -754,10 +754,12 @@ mod tests {
 
     #[test]
     fn value_records_drop_unmappable_variation_indices() {
-        for (index, mapped, expected_value) in [
-            ((1, 2), None, 10),
-            ((0xffff, 0xffff), None, 10),
-            ((1, 2), Some((0xffffffff, 5)), 15),
+        // Indices that are mapped to NO_VARIATION_INDEX are still written out,
+        // like Harfbuzz does (it only drops indices missing from the map).
+        for (index, mapped, expected_value, expect_device) in [
+            ((1, 2), None, 10, false),
+            ((0xffff, 0xffff), None, 10, false),
+            ((1, 2), Some((0xffffffff, 5)), 15, true),
         ] {
             let source = write_fonts::dump_table(&OwnedValue::new(
                 10.into(),
@@ -772,7 +774,7 @@ mod tests {
                     .borrow_mut()
                     .insert(0x10002, mapped);
             }
-            let mut serializer = Serializer::new(64);
+            let mut serializer = Serializer::new(64).unwrap();
             serializer.start_serialize().unwrap();
             value.subset(&plan, &mut serializer, source_data).unwrap();
             serializer.end_serialize();
@@ -781,7 +783,7 @@ mod tests {
             let data = FontData::new(&bytes);
             let value = data.read_array::<MathValueRecord>(0..4).unwrap()[0];
             assert_eq!(value.value().to_i16(), expected_value);
-            assert!(value.device(data).is_none());
+            assert_eq!(value.device(data).is_some(), expect_device);
         }
     }
 }

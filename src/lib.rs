@@ -2203,7 +2203,7 @@ fn subset<'a>(
     }
 
     let buf_size = estimate_subset_table_size(font, table_tag, plan);
-    let mut s = Serializer::new(buf_size);
+    let mut s = Serializer::new(buf_size).map_err(|_| SubsetError::SubsetTableError(table_tag))?;
     let needed = try_subset(table_tag, font, plan, builder, &mut s, table_len, state);
     if s.in_error() && !s.only_offset_overflow() {
         return Err(SubsetError::SubsetTableError(table_tag));
@@ -2255,7 +2255,8 @@ fn try_subset<'a>(
     if buf_size > (table_len as usize) * 256 {
         return ret;
     }
-    s.reset_size(buf_size);
+    s.reset_size(buf_size)
+        .map_err(|_| SubsetError::SubsetTableError(table_tag))?;
     try_subset(table_tag, font, plan, builder, s, table_len, state)
 }
 
@@ -2684,6 +2685,7 @@ mod test {
                 &IntSet::empty(),
                 &IntSet::empty(),
                 &IntSet::empty(),
+                &None,
             );
             let estimate = estimate_subset_table_size(&font, Glyf::TAG, &plan);
             // 8192 bytes of fixed slack, then at most glyf plus one pad byte per glyph
