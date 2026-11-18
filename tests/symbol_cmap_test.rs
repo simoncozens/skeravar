@@ -1,5 +1,5 @@
 //! Symbol cmap retention and low-byte PUA aliases, from HB report 51.
-use skera::{subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
+use skeravar::{subset_font, Plan, SubsetFlags, DEFAULT_LAYOUT_FEATURES};
 use skrifa::MetadataProvider;
 use write_fonts::{
     read::{collections::IntSet, FontRef, TableProvider},
@@ -44,6 +44,7 @@ fn symbol_maps_survive_unicode_and_glyph_selection() {
                 &DEFAULT_LAYOUT_FEATURES.iter().copied().collect(),
                 &IntSet::all(),
                 &IntSet::all(),
+                &None,
             );
             let mapping = plan
                 .old_to_new_glyph_mapping()
@@ -87,6 +88,7 @@ fn direct_low_byte_mapping_does_not_retain_a_different_pua_glyph() {
             &DEFAULT_LAYOUT_FEATURES.iter().copied().collect(),
             &IntSet::all(),
             &IntSet::all(),
+            &None,
         );
         let mapping = plan
             .old_to_new_glyph_mapping()
