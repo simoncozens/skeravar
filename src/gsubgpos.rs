@@ -1,11 +1,10 @@
 //! impl subset() for Sequence Context/Chained Sequence Context tables
 use crate::{
-    FastHashMap,
     layout::{for_each_intersected_glyph_and_index, map_gsub_glyph, ClassDefSubsetStruct},
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::{IterNullableHelper, SubsetOffsetArray},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    Plan, SubsetState, SubsetTable,
+    FastHashMap, Plan, SubsetState, SubsetTable,
 };
 use write_fonts::{
     read::{

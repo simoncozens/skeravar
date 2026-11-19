@@ -1,10 +1,9 @@
 //! impl subset() for MarkRecord subtable
 use crate::{
-    FastHashMap,
     layout::for_each_intersected_coverage_index,
     offset::SerializeSubset,
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
-    CollectVariationIndices, Plan, SubsetTable,
+    CollectVariationIndices, FastHashMap, Plan, SubsetTable,
 };
 use write_fonts::{
     read::{
