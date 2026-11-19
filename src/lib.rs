@@ -1408,10 +1408,9 @@ impl Plan {
             return Ok(());
         };
         for tag in mvar.value_records().iter().map(|vr| vr.value_tag()) {
-            self.mvar_entries.insert(
-                tag,
-                mvar.metric_delta(tag, &self.normalized_coords)?.to_f32(),
-            );
+            if let Some(delta) = mvar.metric_delta(tag, &self.normalized_coords) {
+                self.mvar_entries.insert(tag, delta.to_f32());
+            }
         }
         Ok(())
     }
@@ -1470,7 +1469,7 @@ fn remap_variation_indices(
                 outer: major as u16,
                 inner: (var_idx & 0xFFFF) as u16,
             };
-            if let Ok(value) = var_store.compute_delta(index, normalized_coords) {
+            if let Some(value) = var_store.compute_delta(index, normalized_coords) {
                 delta = value.to_i32();
             }
         }
@@ -1522,7 +1521,7 @@ fn remap_variation_indices_float(
                 outer: major as u16,
                 inner: (var_idx & 0xFFFF) as u16,
             };
-            if let Ok(value) = var_store.compute_delta(index, normalized_coords) {
+            if let Some(value) = var_store.compute_delta(index, normalized_coords) {
                 delta = value;
             }
         }
