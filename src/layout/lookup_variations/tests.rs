@@ -76,7 +76,9 @@ fn plan(gpos: bool) -> Plan {
         plan.gsub_features_w_duplicates = features;
         plan.gsub_lookups = lookups;
     }
-    plan.layout_varidx_delta_map.insert(0x10002, (0x20003, 0));
+    plan.layout_varidx_delta_map
+        .borrow_mut()
+        .insert(0x10002, (0x20003, 0));
     plan
 }
 
@@ -353,10 +355,10 @@ fn lookup_variation_conditions_retain_and_remap_gdef_store_rows() {
         let bytes = builder.build();
         let font = FontRef::new(&bytes).unwrap();
         let mut plan = plan(gpos);
-        plan.layout_varidx_delta_map.clear();
+        plan.layout_varidx_delta_map.borrow_mut().clear();
         plan.collect_layout_var_indices(&font);
-        assert_eq!(plan.layout_varidx_delta_map.get(&1), Some(&(0, 0)));
-        assert_eq!(plan.layout_varidx_delta_map.len(), 1);
+        assert_eq!(plan.layout_varidx_delta_map.borrow().get(&1), Some(&(0, 0)));
+        assert_eq!(plan.layout_varidx_delta_map.borrow().len(), 1);
         let output = subset(&variations, &plan, gpos).unwrap();
         let table = FeatureVariations::read(FontData::new(&output)).unwrap();
         let lookups = table.lookup_variation_records().unwrap()[0]

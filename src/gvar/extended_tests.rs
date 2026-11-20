@@ -147,6 +147,7 @@ fn extended_gvar_is_dispatched_and_legacy_variations_are_dropped() {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &None,
     );
     let bytes = crate::subset_font(&font, &plan).unwrap();
     let font = FontRef::new(&bytes).unwrap();

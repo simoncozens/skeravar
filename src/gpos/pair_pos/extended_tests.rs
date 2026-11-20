@@ -50,7 +50,9 @@ pub(super) fn plan(mapped: [u32; 3]) -> Plan {
         (0x00050006, 0x000b000c),
         (0x00070008, 0x000d000e),
     ] {
-        plan.layout_varidx_delta_map.insert(old, (new, 0));
+        plan.layout_varidx_delta_map
+            .borrow_mut()
+            .insert(old, (new, 0));
     }
     plan
 }

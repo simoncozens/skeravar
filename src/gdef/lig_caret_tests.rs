@@ -1,7 +1,7 @@
 use super::*;
 use font_test_data::bebuffer::BeBuffer;
 use read_fonts::{
-    tables::{gdef::LigCaretListTable, layout::DeviceOrVariationIndex},
+    tables::{gdef::SelectedLigCaretList, layout::DeviceOrVariationIndex},
     types::{GlyphId, GlyphId24},
     FontData, FontRead,
 };
@@ -58,16 +58,20 @@ fn plan() -> Plan {
         plan.glyphset_gsub.insert(GlyphId::new(old));
         plan.glyph_map_gsub[old as usize] = GlyphId::new(new);
     }
-    plan.layout_varidx_delta_map.insert(0x10002, (0x70008, 0));
-    plan.layout_varidx_delta_map.insert(0x30004, (0x9000a, 0));
+    plan.layout_varidx_delta_map
+        .borrow_mut()
+        .insert(0x10002, (0x70008, 0));
+    plan.layout_varidx_delta_map
+        .borrow_mut()
+        .insert(0x30004, (0x9000a, 0));
     plan
 }
 
-fn read(bytes: &[u8], wide: bool) -> LigCaretListTable<'_> {
+fn read(bytes: &[u8], wide: bool) -> SelectedLigCaretList<'_> {
     if wide {
-        LigCaretListTable::Offset24(LigCaretList2::read(FontData::new(bytes)).unwrap())
+        SelectedLigCaretList::Extended(LigCaretList2::read(FontData::new(bytes)).unwrap())
     } else {
-        LigCaretListTable::Offset16(LigCaretList::read(FontData::new(bytes)).unwrap())
+        SelectedLigCaretList::Original(LigCaretList::read(FontData::new(bytes)).unwrap())
     }
 }
 

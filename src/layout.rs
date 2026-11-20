@@ -570,17 +570,22 @@ pub(crate) fn intersected_glyphs_and_indices(
     let mut glyphs = Vec::with_capacity(cap);
     let mut indices = IntSet::empty();
 
-    let _ = for_each_intersected_glyph_and_index::<()>(
-        coverage,
-        glyph_set,
-        glyph_map,
-        array_len,
-        |idx, g| {
-            glyphs.push(g);
-            indices.insert(idx);
-            Ok(())
-        },
-    );
+    // Walk the glyph set in sorted order and look each glyph up in the coverage;
+    // this keeps a single output entry per retained glyph even when the input
+    // coverage repeats a glyph id (Harfbuzz's set intersection behaves the same).
+    for g in glyph_set.iter() {
+        let Some(idx) = coverage.get(g) else {
+            continue;
+        };
+        if idx >= array_len {
+            continue;
+        }
+        let Some(new_g) = map_gsub_glyph(glyph_map, g) else {
+            continue;
+        };
+        glyphs.push(new_g);
+        indices.insert(idx);
+    }
     (glyphs, indices)
 }
 

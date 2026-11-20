@@ -54,7 +54,9 @@ fn conditions_preserve_all_formats_and_remap_variable_values() {
         .push(F2Dot14::from_f32(0.5))
         .to_vec();
     let mut plan = Plan::default();
-    plan.layout_varidx_delta_map.insert(0x10002, (0x70008, 3));
+    plan.layout_varidx_delta_map
+        .borrow_mut()
+        .insert(0x10002, (0x70008, 3));
     let bytes = compound(
         3,
         &[
@@ -77,13 +79,13 @@ fn conditions_preserve_all_formats_and_remap_variable_values() {
             let before = table
                 .evaluate(&coords, |index| {
                     assert_eq!(index, 0x10002);
-                    Ok::<_, ReadError>(delta)
+                    Ok::<f64, read_fonts::model::Error>(delta)
                 })
                 .unwrap();
             let after = output
                 .evaluate(&coords, |index| {
                     assert_eq!(index, 0x70008);
-                    Ok::<_, ReadError>(delta - 3.0)
+                    Ok::<f64, read_fonts::model::Error>(delta - 3.0)
                 })
                 .unwrap();
             assert_eq!(before, after);
@@ -108,7 +110,9 @@ fn conditions_preserve_all_formats_and_remap_variable_values() {
     };
     assert_eq!(output.default_value(), -5);
     assert_eq!(output.var_index(), NO_VARIATION_INDEX);
-    plan.layout_varidx_delta_map.insert(0x10002, (0, i32::MAX));
+    plan.layout_varidx_delta_map
+        .borrow_mut()
+        .insert(0x10002, (0, i32::MAX));
     assert_eq!(
         subset(&table, &plan),
         Err(SerializeErrorFlags::SERIALIZE_ERROR_INT_OVERFLOW)
@@ -134,7 +138,9 @@ fn conditions_keep_null_boolean_operands_and_condition_set_members() {
         let output = subset(&table, &Plan::default()).unwrap();
         let output = Condition::read(FontData::new(&output)).unwrap();
         assert_eq!(
-            output.evaluate(&[], |_| Ok::<_, ReadError>(0.0)).unwrap(),
+            output
+                .evaluate(&[], |_| Ok::<f64, read_fonts::model::Error>(0.0))
+                .unwrap(),
             expected
         );
         if let Condition::Format4Or(table) = output {
@@ -164,7 +170,9 @@ fn conditions_keep_null_boolean_operands_and_condition_set_members() {
         output.conditions().get(1).unwrap(),
         Condition::Format5Negate(_)
     ));
-    assert!(!output.evaluate(&[], |_| Ok::<_, ReadError>(0.0)).unwrap());
+    assert!(!output
+        .evaluate(&[], |_| Ok::<f64, read_fonts::model::Error>(0.0))
+        .unwrap());
 }
 
 #[test]

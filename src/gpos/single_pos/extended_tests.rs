@@ -49,8 +49,10 @@ fn plan(mapped: [u32; 2]) -> Plan {
         plan.glyph_map_gsub[old as usize] = GlyphId::new(new);
     }
     plan.layout_varidx_delta_map
+        .borrow_mut()
         .insert(0x00010002, (0x00070008, 0));
     plan.layout_varidx_delta_map
+        .borrow_mut()
         .insert(0x00030004, (0x0009000a, 0));
     plan
 }

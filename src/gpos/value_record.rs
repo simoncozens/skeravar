@@ -15,8 +15,10 @@ use skrifa::raw::{
     ReadError,
 };
 
+/// The on-disk length of a value record, counting every bit set in the format
+/// (including reserved ones), matching how Harfbuzz sizes the record array.
 pub(crate) fn compute_record_len(value_format: ValueFormat) -> usize {
-    value_format.record_byte_len()
+    (value_format.bits() as u8).count_ones() as usize * 2
 }
 
 pub(crate) fn compute_effective_format(

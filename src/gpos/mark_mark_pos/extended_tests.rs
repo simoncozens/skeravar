@@ -64,6 +64,7 @@ fn plan(mapped: [u32; 4]) -> Plan {
     }
     for i in [1u32, 3, 5, 7, 9] {
         plan.layout_varidx_delta_map
+            .borrow_mut()
             .insert((i << 16) | (i + 1), (((i + 8) << 16) | (i + 9), 0));
     }
     plan

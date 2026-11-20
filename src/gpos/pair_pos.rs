@@ -340,9 +340,17 @@ macro_rules! subset_glyph_pairs {
                 };
 
                 if !plan.normalized_coords.is_empty() {
-                    unimplemented!("variable instancing for PairPos");
-                }
-                if plan
+                    // Instancing case: compute effective formats to filter out device flags
+                    // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
+                    compute_effective_pair_formats_1(
+                        glyph_set,
+                        &mut pair_set_info,
+                        false,
+                        false,
+                        plan,
+                    )
+                    .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
+                } else if plan
                     .subset_flags
                     .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
                 {
@@ -624,9 +632,18 @@ macro_rules! subset_class_pairs {
                 };
 
                 if !plan.normalized_coords.is_empty() {
-                    unimplemented!("variable instancing for PairPos");
-                }
-                if plan
+                    // Instancing case: compute effective formats to filter out device flags
+                    // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
+                    compute_effective_pair_formats_2(
+                        &mut pairpos2_info,
+                        &class1_map,
+                        &class2_idxes,
+                        false,
+                        false,
+                        plan,
+                    )
+                    .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
+                } else if plan
                     .subset_flags
                     .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
                 {

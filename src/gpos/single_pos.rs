@@ -74,10 +74,11 @@ macro_rules! single_value_position {
                 }
 
                 let value_record = self.value_record();
-                if !plan.normalized_coords.is_empty() {
-                    unimplemented!("variable instancing for SinglePos formats 1/3");
-                }
-                let new_format = if plan
+                let new_format = if !plan.normalized_coords.is_empty() {
+                    // Instancing case: compute effective formats to filter out device flags
+                    // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
+                    compute_effective_format(&value_record, false, false, Some(plan))
+                } else if plan
                     .subset_flags
                     .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
                 {
@@ -135,9 +136,6 @@ fn compute_new_value_format(
     font: &FontRef,
     retained_rec_idxes: &IntSet<u32>,
 ) -> Result<(), ReadError> {
-    if !plan.normalized_coords.is_empty() {
-        unimplemented!("variable instancing for SinglePos formats 2/4");
-    }
     let (value_format, records_offset, record_size, font_data, new_format) = (
         singlepos_info.value_format,
         singlepos_info.records_offset,
@@ -145,6 +143,16 @@ fn compute_new_value_format(
         singlepos_info.font_data,
         &mut singlepos_info.new_format,
     );
+    if !plan.normalized_coords.is_empty() {
+        // Instancing case: compute effective formats to filter out device flags
+        // that won't produce output (variation indices mapped to NO_VARIATION_INDEX)
+        for i in retained_rec_idxes.iter() {
+            let offset = records_offset + i as usize * record_size;
+            let value_record = ValueRecord::new(font_data, offset, value_format);
+            *new_format |= compute_effective_format(&value_record, false, false, Some(plan));
+        }
+        return Ok(());
+    }
     if plan
         .subset_flags
         .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING)
@@ -587,8 +595,10 @@ mod test {
 
         // Map old varidx -> new varidx
         plan.layout_varidx_delta_map
+            .borrow_mut()
             .insert(0x00030004, (0x00070008, 0));
         plan.layout_varidx_delta_map
+            .borrow_mut()
             .insert(0x00050006, (0x0009000a, 0));
 
         let mut s = Serializer::new(1024);
@@ -625,6 +635,7 @@ mod test {
         plan.glyph_map_gsub[20] = GlyphId::from(1_u32);
         plan.glyphset_gsub.insert(GlyphId::from(20_u32));
         plan.layout_varidx_delta_map
+            .borrow_mut()
             .insert(0x00030004, (0x00070008, 0));
 
         let mut s = Serializer::new(1024);
