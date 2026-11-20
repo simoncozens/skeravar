@@ -55,3 +55,7 @@ tempfile = "3"
 [[test]]
 name = "integration_test"
 harness = false
+
+[lints.clippy]
+needless_range_loop = "allow" # Upstream does it all the time
+too_many_arguments = "allow"  # This is just complex stuff, man
