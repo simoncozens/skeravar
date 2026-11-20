@@ -287,12 +287,11 @@ fn subset_gpos(
     {
         let snap = s.snapshot();
         let feature_vars_offset_pos = s.embed(0_u32)?;
-        let insert_catch_all = !plan.gpos_old_features.is_empty();
         if Offset32::serialize_subset(
             &feature_variations,
             s,
             plan,
-            (&mut c, insert_catch_all),
+            &mut c,
             feature_vars_offset_pos,
         )
         .is_empty()?
