@@ -1443,7 +1443,12 @@ impl Plan {
         let Ok(mvar) = font.mvar() else {
             return Ok(());
         };
-        for tag in mvar.value_records().iter().map(|vr| vr.value_tag()) {
+        for tag in mvar
+            .value_records()
+            .iter()
+            .flatten()
+            .map(|vr| vr.value_tag())
+        {
             if let Some(delta) = mvar.metric_delta(tag, &self.normalized_coords) {
                 self.mvar_entries.insert(tag, delta.to_f32());
             }

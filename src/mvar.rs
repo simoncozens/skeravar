@@ -48,7 +48,7 @@ impl Subset for Mvar<'_> {
         if let Some(ref var_store) = var_store {
             let vardata_count = var_store.item_variation_data_count() as usize;
             let mut inner_sets = vec![IntSet::empty(); vardata_count];
-            for value_record in self.value_records() {
+            for value_record in self.value_records().iter().flatten() {
                 let outer = value_record.delta_set_outer_index() as usize;
                 if outer >= inner_sets.len() {
                     continue;
@@ -81,7 +81,7 @@ impl Subset for Mvar<'_> {
                     .map_err(|_| SubsetError::SubsetTableError(Mvar::TAG))?;
             }
         }
-        for value_record in self.value_records() {
+        for value_record in self.value_records().iter().flatten() {
             s.embed(value_record.value_tag())
                 .map_err(|_| SubsetError::SubsetTableError(Mvar::TAG))?;
 

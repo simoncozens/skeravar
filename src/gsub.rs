@@ -400,6 +400,7 @@ mod test {
             &layout_features,
             &(0u16..=6).map(NameId::new).collect(),
             &IntSet::all(),
+            &None,
         );
         assert!(plan.name_ids.contains(NameId::new(400)));
 
