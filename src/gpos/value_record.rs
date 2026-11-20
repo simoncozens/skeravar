@@ -365,7 +365,7 @@ mod test {
             let format = source.format();
             let source = write_fonts::dump_table(&source).unwrap();
             let value = ValueRecord::new(FontData::new(&source), 0, format);
-            let mut plan = Plan::default();
+            let plan = Plan::default();
             if let Some(mapped) = mapped {
                 // All mapped cases use source (1, 2): (outer << 16) | inner.
                 plan.layout_varidx_delta_map

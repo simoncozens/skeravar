@@ -527,7 +527,7 @@ impl<'a, 's, F: CffFlavor, S: CharStringSource, A: CharStringActions<'s>>
             let mut mask = &[][..];
             self.width(op)?;
             if matches!(op, 1 | 3 | 18 | 23 | 19 | 20) {
-                if self.stack.len() % 2 != 0 {
+                if !self.stack.len().is_multiple_of(2) {
                     return Err(Error);
                 }
                 self.hints = self.hints.checked_add(self.stack.len() / 2).ok_or(Error)?;

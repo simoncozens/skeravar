@@ -53,7 +53,7 @@ fn conditions_preserve_all_formats_and_remap_variable_values() {
         .push(F2Dot14::from_f32(-0.5))
         .push(F2Dot14::from_f32(0.5))
         .to_vec();
-    let mut plan = Plan::default();
+    let plan = Plan::default();
     plan.layout_varidx_delta_map
         .borrow_mut()
         .insert(0x10002, (0x70008, 3));

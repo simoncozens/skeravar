@@ -58,4 +58,5 @@ harness = false
 
 [lints.clippy]
 needless_range_loop = "allow" # Upstream does it all the time
+while_let_loop = "allow"      # And this
 too_many_arguments = "allow"  # This is just complex stuff, man

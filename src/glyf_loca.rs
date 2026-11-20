@@ -810,7 +810,6 @@ fn make_simple_glyph_with_deltas(
         y_min = y_min.min(y_otround);
         x_max = x_max.max(x_otround);
         y_max = y_max.max(y_otround);
-        #[allow(clippy::new_instead_of_clear)] // .into() moved it, it's gone
         if point.is_end_point {
             simple_glyph.contours.push(last_contour.into());
             last_contour = vec![];

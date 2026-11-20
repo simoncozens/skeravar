@@ -731,7 +731,7 @@ mod tests {
         .unwrap();
         let source_data = FontData::new(&source);
         let value = source_data.read_array::<MathValueRecord>(0..4).unwrap()[0];
-        let mut plan = Plan::default();
+        let plan = Plan::default();
         plan.layout_varidx_delta_map
             .borrow_mut()
             .insert(0x10002, (0x30004, 5));
@@ -768,7 +768,7 @@ mod tests {
             .unwrap();
             let source_data = FontData::new(&source);
             let value = source_data.read_array::<MathValueRecord>(0..4).unwrap()[0];
-            let mut plan = Plan::default();
+            let plan = Plan::default();
             if let Some(mapped) = mapped {
                 plan.layout_varidx_delta_map
                     .borrow_mut()
