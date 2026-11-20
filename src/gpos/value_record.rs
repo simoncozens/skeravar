@@ -2,7 +2,7 @@
 
 use crate::{
     offset::SerializeSubset,
-    serialize::{SerializeErrorFlags, Serializer},
+    serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
     CollectVariationIndices, Plan, SubsetTable,
 };
 use read_fonts::{
@@ -233,18 +233,21 @@ fn copy_device(
     // by `new_format`, regardless of whether the source has a real device table.
     let offset_pos = s.embed(0_u16)?;
 
-    // A null offset (or a broken device table) leaves the slot as a null offset.
-    let Some(Ok(device)) = device else {
-        return Ok(());
+    let device = match device {
+        // A null offset leaves the slot as a null offset.
+        None => return Ok(()),
+        Some(Ok(device)) => device,
+        // An offset that leads nowhere is like something HarfBuzz's sanitizer
+        // rejects, so fail the table rather than emitting a null offset.
+        Some(Err(_)) => return Err(s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)),
     };
 
-    // Mirrors HarfBuzz's ValueFormat::copy_device: if the device table cannot be
-    // serialized it is simply dropped, leaving a null offset behind.
+    // Mirrors HarfBuzz's ValueFormat::copy_device: a device that subsets to
+    // nothing (an unretained variation index, say) leaves a null offset behind,
+    // but any other failure fails the table.
     let varidx_map = plan.layout_varidx_delta_map.borrow();
-    match Offset16::serialize_subset(&device, s, plan, &varidx_map, offset_pos) {
-        Ok(()) => Ok(()),
-        Err(_) => Ok(()),
-    }
+    Offset16::serialize_subset(&device, s, plan, &varidx_map, offset_pos).is_empty()?;
+    Ok(())
 }
 
 impl CollectVariationIndices for ValueRecord<'_> {
