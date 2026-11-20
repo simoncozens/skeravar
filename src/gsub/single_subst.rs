@@ -2,7 +2,7 @@
 mod extended;
 
 use crate::{
-    layout::{for_each_intersected_glyph_and_index, map_gsub_glyph},
+    layout::{for_each_intersected_glyph_and_index, intersected_glyphs_and_indices, map_gsub_glyph},
     offset::SerializeSerialize,
     serialize::{SerializeErrorFlags, Serializer},
     FastHashMap, Plan, Serialize, SubsetState, SubsetTable,

@@ -1,6 +1,8 @@
 //! impl subset() for Sequence Context/Chained Sequence Context tables
 use crate::{
-    layout::{for_each_intersected_glyph_and_index, map_gsub_glyph, ClassDefSubsetStruct},
+    layout::{
+        for_each_intersected_glyph_and_index, map_gsub_glyph, ClassDefSubsetStruct, ClassMap,
+    },
     offset::{SerializeSerialize, SerializeSubset},
     offset_array::{IterNullableHelper, SubsetOffsetArray},
     serialize::{SerializeErrorFlags, SerializeResultEmpty, Serializer},
