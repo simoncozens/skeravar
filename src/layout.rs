@@ -1388,6 +1388,76 @@ macro_rules! subset_lookup_list {
 subset_lookup_list!(LookupList);
 subset_lookup_list!(LookupList2);
 
+impl<'a, T> SubsetTable<'a> for ArrayOfOffsets<'a, T, Offset16>
+where
+    T: SubsetTable<
+            'a,
+            ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>),
+        > + Intersect
+        + FontRead<'a, Args = ()>
+        + 'a,
+{
+    type ArgsForSubset = T::ArgsForSubset;
+    type Output = u16;
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        args: Self::ArgsForSubset,
+    ) -> Result<Self::Output, SerializeErrorFlags> {
+        let mut count = 0_u16;
+        for sub in self.iter().filter_map(|table| match table {
+            Err(ReadError::NullOffset) => None,
+            other => Some(other),
+        }) {
+            let sub =
+                sub.map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
+            if !sub
+                .intersects(&plan.glyphset_gsub)
+                .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?
+            {
+                continue;
+            }
+            let snap = s.snapshot();
+            let offset_pos = s.embed(0_u16)?;
+            match Offset16::serialize_subset(&sub, s, plan, args, offset_pos) {
+                Ok(_) => count += 1,
+                Err(SerializeErrorFlags::SERIALIZE_ERROR_EMPTY) => s.revert_snapshot(snap),
+                Err(e) => {
+                    s.revert_snapshot(snap);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(count)
+    }
+}
+
+impl<
+        'a,
+        T: FontRead<'a, Args = ()>
+            + SubsetTable<
+                'a,
+                ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>),
+            >,
+    > SubsetTable<'a> for read_fonts::tables::layout::SelectedLookupList<'a, T>
+{
+    type ArgsForSubset = (&'a SubsetState, &'a FontRef<'a>, &'a FastHashMap<u16, u16>);
+    type Output = ();
+
+    fn subset(
+        &self,
+        plan: &Plan,
+        s: &mut Serializer,
+        args: Self::ArgsForSubset,
+    ) -> Result<(), SerializeErrorFlags> {
+        match self {
+            Self::Original(t) => t.subset(plan, s, args),
+            Self::Extended(t) => t.subset(plan, s, args),
+        }
+    }
+}
+
 impl<'a> SubsetTable<'a> for FeatureVariations<'_> {
     type ArgsForSubset = &'a mut SubsetLayoutContext;
     type Output = ();
@@ -1598,6 +1668,6 @@ impl<'a> SubsetTable<'a> for FeatureTableSubstitutionRecord {
         s.embed(*new_feature_index)?;
 
         let feature_offset_pos = s.embed(0_u32)?;
-        Offset32::serialize_subset(&alternate_feature, s, plan, c, feature_offset_pos)
+        Offset32::serialize_subset(&alternate_feature, s, plan, (c, None), feature_offset_pos)
     }
 }

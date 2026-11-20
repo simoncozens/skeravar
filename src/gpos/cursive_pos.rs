@@ -111,7 +111,7 @@ macro_rules! subset_entry_exit_record {
                     .transpose()
                     .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
                 {
-                    $offset::serialize_subset(&entry_anchor, s, plan, (), entry_offset_pos)?;
+                    $offset::serialize_subset(&entry_anchor, s, plan, font_data, entry_offset_pos)?;
                 }
 
                 let exit_offset_pos = s.allocate_size($offset::RAW_BYTE_LEN, true)?;
@@ -120,7 +120,7 @@ macro_rules! subset_entry_exit_record {
                     .transpose()
                     .map_err(|_| SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR)?
                 {
-                    $offset::serialize_subset(&exit_anchor, s, plan, (), exit_offset_pos)?;
+                    $offset::serialize_subset(&exit_anchor, s, plan, font_data, exit_offset_pos)?;
                 }
                 Ok(())
             }

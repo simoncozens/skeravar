@@ -32,6 +32,7 @@ impl<'a> SubsetTable<'a> for NestedCondition<'_> {
             Condition::Format2VariableValue(table) => {
                 let (index, delta) = plan
                     .layout_varidx_delta_map
+                    .borrow()
                     .get(&table.var_index())
                     .copied()
                     .unwrap_or((NO_VARIATION_INDEX, 0));

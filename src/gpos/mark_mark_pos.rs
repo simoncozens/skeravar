@@ -269,7 +269,13 @@ macro_rules! subset_mark2_record {
                     else {
                         continue;
                     };
-                    $offset::serialize_subset(&mark2_anchor, s, plan, (), anchor_offset_pos)?;
+                    $offset::serialize_subset(
+                        &mark2_anchor,
+                        s,
+                        plan,
+                        font_data,
+                        anchor_offset_pos,
+                    )?;
                     if !has_effective_anchors {
                         has_effective_anchors = true;
                     }

@@ -56,7 +56,13 @@ pub(super) fn subset_extended_gdef(
             &store,
             s,
             plan,
-            (&plan.gdef_varstore_inner_maps, false),
+            crate::variations::VarStoreSubsetArgs {
+                inner_maps: &plan.gdef_varstore_inner_maps,
+                keep_empty: !plan.normalized_coords.is_empty(),
+                optimize: true,
+                use_no_variation_idx: true,
+                remap_layout_varidx_map: true,
+            },
             varstore_pos,
         )
         .is_empty()?

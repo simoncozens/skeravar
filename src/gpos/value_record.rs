@@ -15,6 +15,10 @@ use skrifa::raw::{
     ReadError,
 };
 
+pub(crate) fn compute_record_len(value_format: ValueFormat) -> usize {
+    value_format.record_byte_len()
+}
+
 pub(crate) fn compute_effective_format(
     value_record: &ValueRecord<'_>,
     strip_hints: bool,

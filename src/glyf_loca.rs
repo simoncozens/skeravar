@@ -778,6 +778,7 @@ fn make_simple_glyph_with_deltas(
             x: x_otround,
             y: y_otround,
             on_curve: point.is_on_curve,
+            cubic: false,
         });
         x_min = x_min.min(x_otround);
         y_min = y_min.min(y_otround);

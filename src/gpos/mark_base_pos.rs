@@ -265,7 +265,7 @@ macro_rules! subset_base_record {
                     else {
                         continue;
                     };
-                    $offset::serialize_subset(&base_anchor, s, plan, (), anchor_offset_pos)?;
+                    $offset::serialize_subset(&base_anchor, s, plan, font_data, anchor_offset_pos)?;
                     if !has_effective_anchors {
                         has_effective_anchors = true;
                     }

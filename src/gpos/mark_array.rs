@@ -169,7 +169,7 @@ macro_rules! subset_mark_record {
                     .mark_anchor(font_data)
                     .map_err(|_| s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR))?;
 
-                $offset::serialize_subset(&mark_anchor, s, plan, (), anchor_offset_pos)
+                $offset::serialize_subset(&mark_anchor, s, plan, font_data, anchor_offset_pos)
             }
         }
     };
