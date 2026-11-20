@@ -309,10 +309,18 @@ impl SubsetFlags {
     pub const SUBSET_FLAGS_NO_BIDI_CLOSURE: Self = Self(0x0800);
 
     //If set force the use of long format in the 'loca' table even if the offsets would fit in the short format.
-    pub const SUBSET_FLAGS_FORCE_LONG_LOCA: Self = Self(0x0800);
+    /// If set enforce requirements on the output subset to allow it to be used with incremental
+    /// font transfer IFTB patches. Primarily, this forces all outline data to use long (32 bit)
+    /// offsets.
+    pub const SUBSET_FLAGS_IFTB_REQUIREMENTS: Self = Self(0x1000);
+
+    /// If this flag is set along side SUBSET_FLAGS_RETAIN_GIDS then the number of glyphs in the
+    /// font won't be reduced as a result of subsetting. If necessary empty glyphs will be included
+    /// at the end of the font to keep the number of glyphs unchanged.
+    pub const SUBSET_FLAGS_RETAIN_NUM_GLYPHS: Self = Self(0x2000);
 
     //If set rebuild the name table of instantiated font from STAT table particles
-    pub const SUBSET_FLAGS_UPDATE_NAME_TABLE: Self = Self(0x2000);
+    pub const SUBSET_FLAGS_UPDATE_NAME_TABLE: Self = Self(0x8000);
     /// Returns `true` if all of the flags in `other` are contained within `self`.
     #[inline]
     pub const fn contains(&self, other: Self) -> bool {
@@ -567,6 +575,14 @@ impl Plan {
         this.populate_gids_to_retain(font)
             .expect("Could not populate gids to retain");
         this.create_old_gid_to_new_gid_map();
+
+        // ref: <https://github.com/harfbuzz/harfbuzz/blob/a69b43c1f/src/hb-subset-plan.cc#L750>
+        if this.subset_flags.contains(
+            SubsetFlags::SUBSET_FLAGS_RETAIN_GIDS | SubsetFlags::SUBSET_FLAGS_RETAIN_NUM_GLYPHS,
+        ) {
+            // We've been requested to maintain the num glyphs count from the input font.
+            this.num_output_glyphs = this.font_num_glyphs;
+        }
 
         this.create_glyph_map_gsub();
         //update the unicode to new gid list
@@ -2126,8 +2142,12 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Hdmx::TAG))?
             .subset(plan, font, s, builder),
 
-        //Skip, handled by glyf
-        Head::TAG => Ok(()),
+        //handled by glyf table if exists
+        Head::TAG => font.selected_glyf_loca(None).map(|_| ()).or_else(|_| {
+            font.head()
+                .map_err(|_| SubsetError::SubsetTableError(Head::TAG))?
+                .subset(plan, font, s, builder)
+        }),
 
         //Skip, handled by Hmtx
         Hhea::TAG | HheaExtended::TAG => Ok(()),

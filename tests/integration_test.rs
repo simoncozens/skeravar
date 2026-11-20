@@ -28,7 +28,7 @@ use tempfile::Builder;
 static TEST_DATA_DIR: &str = "./test-data";
 static GEN_EXPECTED_OUTPUTS_VAR: &str = "GEN_EXPECTED_OUTPUTS";
 
-const EXPECTED_FAILURE_CASES: [&str; 7] = [
+const EXPECTED_FAILURE_CASES: [&str; 6] = [
     // These all fail due to a difference in the way Harfbuzz performs layout closure
     // on lookups called from a contextual chaining substitution. We're technically more
     // accurate in how we do it.
@@ -36,8 +36,6 @@ const EXPECTED_FAILURE_CASES: [&str; 7] = [
     "layout.notonastaliqurdu-NotoNastaliqUrdu-Regular.retain-gids.all.ttf",
     "layout.notonastaliqurdu-NotoNastaliqUrdu-Bold.default.all.ttf",
     "layout.notonastaliqurdu-NotoNastaliqUrdu-Bold.retain-gids.all.ttf",
-    // We don't support the retain-num-glyphs flag
-    "retain-num-glyphs-Roboto-Regular.retain-num-glyphs.61,63,5009.ttf",
     // The whole glyf_partial_instancing_iup test set is excluded from HarfBuzz's own
     // CI (it is absent from the `tests` list in harfbuzz/test/subset/meson.build), so
     // its checked-in expected files have drifted; HarfBuzz HEAD no longer reproduces
@@ -264,7 +262,8 @@ fn parse_profile_options(file_name: &str) -> SubsetInput {
                 }
                 "--notdef-outline" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NOTDEF_OUTLINE,
                 "--no-bidi-closure" => subset_flag |= SubsetFlags::SUBSET_FLAGS_NO_BIDI_CLOSURE,
-                "--iftb-requirements" => subset_flag |= SubsetFlags::SUBSET_FLAGS_FORCE_LONG_LOCA,
+                "--iftb-requirements" => subset_flag |= SubsetFlags::SUBSET_FLAGS_IFTB_REQUIREMENTS,
+                "--retain-num-glyphs" => subset_flag |= SubsetFlags::SUBSET_FLAGS_RETAIN_NUM_GLYPHS,
                 _ => continue,
             },
             Some((option_str, list)) => {

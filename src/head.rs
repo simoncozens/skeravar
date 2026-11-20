@@ -104,3 +104,26 @@ pub(crate) fn subset_head(head: &Head, loca_format: u8, plan: &Plan) -> Vec<u8> 
         .copy_from_slice(&[0, loca_format]);
     out
 }
+
+// Fallback for fonts without `glyf`/`loca` (e.g. bitmap-only or CFF fonts):
+// copy the head table, applying the instanced extrema when we have them.
+impl crate::Subset for Head<'_> {
+    fn subset(
+        &self,
+        plan: &Plan,
+        _font: &read_fonts::FontRef,
+        s: &mut crate::serialize::Serializer,
+        _builder: &mut write_fonts::FontBuilder,
+    ) -> Result<(), crate::SubsetError> {
+        use read_fonts::TopLevelTable;
+        let bytes = if plan.normalized_coords.is_empty() {
+            self.offset_data().as_bytes().to_vec()
+        } else {
+            let loca_format = self.index_to_loc_format() as u8;
+            subset_head(self, loca_format, plan)
+        };
+        s.embed_bytes(&bytes)
+            .map_err(|_| crate::SubsetError::SubsetTableError(Head::TAG))?;
+        Ok(())
+    }
+}

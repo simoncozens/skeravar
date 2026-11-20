@@ -123,7 +123,7 @@ impl Subset for Glyf<'_> {
         let loca_format: u8 = if max_offset < 0x1FFFF
             && !plan
                 .subset_flags
-                .contains(SubsetFlags::SUBSET_FLAGS_FORCE_LONG_LOCA)
+                .contains(SubsetFlags::SUBSET_FLAGS_IFTB_REQUIREMENTS)
         {
             0
         } else {
