@@ -260,6 +260,8 @@ fn main() {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
+    env_logger::init();
+
     let subset_flags = parse_subset_flags(&args);
     let mut gids = if args.keep_everything {
         IntSet::<GlyphId>::all()

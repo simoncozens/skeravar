@@ -24,18 +24,17 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["clap"]
+cli = ["clap", "env_logger"]
 
 [dependencies]
 foldhash = { version = "0.2.0", default-features = false }
 clap = { version = "4.5.4", features = ["derive"], optional = true }
-env_logger = "0.11"
+env_logger = { version = "0.11", optional = true }
 
 hashbrown = { version = "0.17.0", default-features = false, features = [
     "inline-more",
 ] }
 log = "0.4.29"
-num-traits = "0.2.18"
 regex = "1.10.4"
 thiserror = "2.0"
 write-fonts = { version = "0.56.0", features = ["read", "tables"] }

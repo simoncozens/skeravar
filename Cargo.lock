@@ -924,7 +924,6 @@ dependencies = [
  "hashbrown",
  "libtest-mimic",
  "log",
- "num-traits",
  "read-fonts",
  "regex",
  "rstest",
