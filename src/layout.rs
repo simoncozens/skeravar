@@ -339,7 +339,15 @@ impl<'a> SubsetTable<'a> for CoverageFormat1<'a> {
         } else {
             glyph_array
                 .iter()
-                .filter_map(|g| map_gsub_glyph(&plan.glyph_map_gsub, GlyphId::from(g.get())))
+                .filter_map(|g| {
+                    let gid = GlyphId::from(g.get());
+                    // Walking the coverage can see glyphs the caller has since
+                    // dropped; only keep the ones still in the glyph set.
+                    if !plan.glyphset_gsub.contains(gid) {
+                        return None;
+                    }
+                    map_gsub_glyph(&plan.glyph_map_gsub, gid)
+                })
                 .collect()
         };
 
@@ -392,8 +400,15 @@ impl<'a> SubsetTable<'a> for CoverageFormat2<'a> {
             self.range_records()
                 .iter()
                 .flat_map(|r| {
-                    r.iter()
-                        .filter_map(|g| map_gsub_glyph(&plan.glyph_map_gsub, GlyphId::from(g)))
+                    r.iter().filter_map(|g| {
+                        let gid = GlyphId::from(g);
+                        // Walking the coverage can see glyphs the caller has since
+                        // dropped; only keep the ones still in the glyph set.
+                        if !plan.glyphset_gsub.contains(gid) {
+                            return None;
+                        }
+                        map_gsub_glyph(&plan.glyph_map_gsub, gid)
+                    })
                 })
                 .collect()
         };

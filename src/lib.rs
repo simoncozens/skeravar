@@ -920,7 +920,7 @@ impl Plan {
             self.new_to_old_gid_list.extend(
                 self.glyphset
                     .iter()
-                    .zip(0u16..)
+                    .zip(0u32..)
                     .map(|x| (GlyphId::from(x.1), x.0)),
             );
             self.num_output_glyphs = self.new_to_old_gid_list.len();
@@ -2113,6 +2113,14 @@ fn subset_table<'a>(
             .map_err(|_| SubsetError::SubsetTableError(Gvar::TAG))?
             .subset(plan, font, s, builder),
 
+        GvarExtended::TAG => font
+            .gvar_extended()
+            .map_err(|_| {
+                s.set_err(SerializeErrorFlags::SERIALIZE_ERROR_READ_ERROR);
+                SubsetError::SubsetTableError(GvarExtended::TAG)
+            })?
+            .subset(plan, font, s, builder),
+
         Hdmx::TAG => font
             .hdmx()
             .map_err(|_| SubsetError::SubsetTableError(Hdmx::TAG))?
@@ -2134,6 +2142,11 @@ fn subset_table<'a>(
         Hmtx::TAG => font
             .hmtx()
             .map_err(|_| SubsetError::SubsetTableError(Hmtx::TAG))?
+            .subset(plan, font, s, builder),
+
+        HmtxExtended::TAG => font
+            .hmtx_extended()
+            .map_err(|_| SubsetError::SubsetTableError(HmtxExtended::TAG))?
             .subset(plan, font, s, builder),
 
         //Skip, handled by Vmtx
@@ -2158,6 +2171,11 @@ fn subset_table<'a>(
         Vmtx::TAG => font
             .vmtx()
             .map_err(|_| SubsetError::SubsetTableError(Vmtx::TAG))?
+            .subset(plan, font, s, builder),
+
+        VmtxExtended::TAG => font
+            .vmtx_extended()
+            .map_err(|_| SubsetError::SubsetTableError(VmtxExtended::TAG))?
             .subset(plan, font, s, builder),
 
         Hvar::TAG => font
