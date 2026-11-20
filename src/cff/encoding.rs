@@ -154,7 +154,7 @@ pub(super) fn encode(out: &mut Vec<u8>, value: f64, dict: bool) -> Result<()> {
         if nibbles.len() % 2 != 0 {
             nibbles.push(15);
         }
-        out.extend(nibbles.chunks_exact(2).map(|n| n[0] << 4 | n[1]));
+        out.extend(nibbles.as_chunks::<2>().0.iter().map(|n| n[0] << 4 | n[1]));
     } else {
         let fixed = (value * 65536.).round();
         if fixed < i32::MIN as f64 || fixed > i32::MAX as f64 {

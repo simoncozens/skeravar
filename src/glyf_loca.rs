@@ -22,8 +22,8 @@ use read_fonts::{
         head::Head,
         loca::Loca,
     },
-    types::{GlyphId, Scalar, Tag, Uint24},
-    FontRead, FontRef, TableProvider, TopLevelTable,
+    types::GlyphId,
+    FontRef, TableProvider, TopLevelTable,
 };
 use skrifa::{
     prelude::{LocationRef, Size},
@@ -371,95 +371,6 @@ fn subset_composite_glyph(g: &CompositeGlyph, plan: &Plan) -> Vec<u8> {
 
     out.truncate(i);
     out
-}
-
-fn serialize_composite_glyph(
-    s: &mut Serializer,
-    bytes: &[u8],
-    plan: &Plan,
-) -> Result<(), SubsetError> {
-    let map_err = |_| SubsetTableError(Glyf::TAG);
-    let start = s.embed_bytes(bytes).map_err(map_err)?;
-    let out = s
-        .get_mut_data(start..start + bytes.len())
-        .ok_or(SubsetTableError(Glyf::TAG))?;
-
-    let drop_hinting = plan
-        .subset_flags
-        .contains(SubsetFlags::SUBSET_FLAGS_NO_HINTING);
-    let set_overlaps_flag = plan
-        .subset_flags
-        .contains(SubsetFlags::SUBSET_FLAGS_SET_OVERLAPS_FLAG);
-
-    let mut more = true;
-    let mut i: usize = 10;
-    let len = out.len();
-
-    while more {
-        if i + 4 > len {
-            return Err(SubsetTableError(Glyf::TAG));
-        }
-        let orig_flags = u16::from_be_bytes([out[i], out[i + 1]]);
-        let mut flags = orig_flags;
-
-        if drop_hinting {
-            flags &= !CompositeGlyphFlags::WE_HAVE_INSTRUCTIONS.bits();
-        }
-
-        // only set overlaps flag on the first component
-        if set_overlaps_flag && i == 10 {
-            flags |= CompositeGlyphFlags::OVERLAP_COMPOUND.bits();
-        }
-
-        if flags != orig_flags {
-            out[i..i + 2].copy_from_slice(&flags.to_be_bytes());
-        }
-
-        let comp_flags = CompositeGlyphFlags::from_bits_truncate(orig_flags);
-        let (old_gid, gid_len) =
-            component_gid(&out[i + 2..], comp_flags).ok_or(SubsetTableError(Glyf::TAG))?;
-        let new_gid = plan
-            .glyph_map
-            .get(&old_gid)
-            .ok_or(SubsetTableError(Glyf::TAG))?
-            .to_u32();
-        if gid_len == 3 {
-            let new_gid =
-                Uint24::try_from(new_gid as usize).map_err(|_| SubsetTableError(Glyf::TAG))?;
-            out[i + 2..i + 5].copy_from_slice(&new_gid.to_be_bytes());
-        } else {
-            let new_gid = u16::try_from(new_gid).map_err(|_| SubsetTableError(Glyf::TAG))?;
-            out[i + 2..i + 4].copy_from_slice(&new_gid.to_be_bytes());
-        }
-
-        i += 2 + gid_len;
-
-        if comp_flags.contains(CompositeGlyphFlags::ARG_1_AND_2_ARE_WORDS) {
-            i += 4;
-        } else {
-            i += 2;
-        }
-
-        if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_A_SCALE) {
-            i += 2;
-        } else if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_AN_X_AND_Y_SCALE) {
-            i += 4;
-        } else if comp_flags.contains(CompositeGlyphFlags::WE_HAVE_A_TWO_BY_TWO) {
-            i += 8;
-        }
-
-        more = comp_flags.contains(CompositeGlyphFlags::MORE_COMPONENTS);
-    }
-
-    Ok(())
-}
-
-fn component_gid(bytes: &[u8], flags: CompositeGlyphFlags) -> Option<(GlyphId, usize)> {
-    if flags.contains(CompositeGlyphFlags::GID_IS_24_BIT) {
-        Some((GlyphId::new(Uint24::read(bytes.get(..3)?)?.to_u32()), 3))
-    } else {
-        Some((GlyphId::new(u32::from(u16::read(bytes.get(..2)?)?)), 2))
-    }
 }
 
 // trim padding bytes for simple glyphs, return trimmed length of the raw data for flags & x/y coordinates
@@ -815,9 +726,7 @@ fn make_composite_glyph_with_deltas(
                     None
                 }
             })
-            .expect("BUG: all component glyphs should have been mapped in Plan::new()")
-            .try_into()
-            .unwrap();
+            .expect("BUG: all component glyphs should have been mapped in Plan::new()");
         // XXX I'm not entirely sure what deltas are generated for other uses
         new_components.push(new_component);
     }
@@ -1076,9 +985,9 @@ impl ContourPoints {
             y_max = self.0[0].y;
 
             let count = self.0.len() - 4;
-            for i in 1..count {
-                let x = self.0[i].x;
-                let y = self.0[i].y;
+            for point in self.0.iter().take(count) {
+                let x = point.x;
+                let y = point.y;
                 x_min = x_min.min(x);
                 x_max = x_max.max(x);
                 y_min = y_min.min(y);
@@ -1395,7 +1304,7 @@ fn get_points_harfbuzz_standalone(
             }
 
             for (comp_index, component) in composite_glyph.components().enumerate() {
-                let item_gid = component.glyph.into();
+                let item_gid = component.glyph;
 
                 // Skip if this component creates a cycle
                 if decycler.contains(&item_gid) {

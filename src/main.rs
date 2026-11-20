@@ -336,7 +336,7 @@ fn main() {
     let font_bytes = std::fs::read(&args.path)
         .unwrap_or_else(|err| panic!("Failed to read file {path:?}.\n{err}", path = args.path));
     let font = FontRef::new(&font_bytes)
-        .unwrap_or_else(|err| panic!("Failed to read {path:?} as font.\n{err}", path = &args.path));
+        .unwrap_or_else(|err| panic!("Failed to read {path:?} as font.\n{err}", path = args.path));
 
     //default value: <https://github.com/harfbuzz/harfbuzz/blob/b5a65e0f20c30a7f13b2f6619479a6d666e603e0/src/hb-subset-input.cc#L46>
     let default_drop_tables = [

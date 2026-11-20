@@ -82,7 +82,7 @@ use read_fonts::{
         cblc::Cblc,
         cff::Cff,
         cff2::Cff2,
-        cmap::{Cmap, Dmap, PlatformId},
+        cmap::{Cmap, PlatformId},
         colr::Colr,
         cpal::Cpal,
         cvar::Cvar,
@@ -99,7 +99,7 @@ use read_fonts::{
         hvar::Hvar,
         loca::Loca,
         math::Math,
-        maxp::{Maxp, MaxpExtended},
+        maxp::Maxp,
         mvar::Mvar,
         name::Name,
         os2::Os2,
@@ -1060,7 +1060,7 @@ impl Plan {
             remove_invalid_gids(&mut self.glyphset_gsub, self.font_num_glyphs);
         }
         // layout closure
-        self.layout_populate_gids_to_retain(font);
+        let _ = self.layout_populate_gids_to_retain(font);
         remove_invalid_gids(&mut self.glyphset_gsub, self.font_num_glyphs);
 
         // GSUB outputs may have MATH metrics and constructions of their own.
@@ -1919,7 +1919,7 @@ fn glyf_closure_glyphs(
             operation_count = glyf_closure_glyphs(
                 loca,
                 glyf,
-                child.glyph.into(),
+                child.glyph,
                 gids_to_retain,
                 operation_count,
                 depth,
