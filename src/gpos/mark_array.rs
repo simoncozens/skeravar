@@ -177,7 +177,7 @@ mod test {
     fn subset_mark_array(raw: &[u8]) -> (Result<(), SerializeErrorFlags>, Serializer) {
         let mark_array = MarkArray::read(FontData::new(raw)).unwrap();
         let plan = Plan::default();
-        let mark_record_idxes: IntSet<u16> = [0, 1].into_iter().collect();
+        let mark_record_idxes: IntSet<u32> = [0, 1].into_iter().collect();
         let mark_class_map: FastHashMap<u16, u16> = [(0, 0), (1, 1)].into_iter().collect();
 
         let mut s = Serializer::new(1024);
