@@ -36,8 +36,6 @@ use write_fonts::{
     OtRound,
 };
 
-pub(crate) mod featurevar;
-
 /// HarfBuzz's `roundf` for a `double` argument: `floor(x + .5)`, i.e. round
 /// half towards positive infinity (unlike Rust's `round`, which rounds half
 /// away from zero). HarfBuzz redefines `roundf` in `hb-algs.hh` and has
